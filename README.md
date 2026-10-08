@@ -314,3 +314,52 @@ provides a `resetDemoData()` helper for this).
   QR, disabled table, unavailable product, unauthorized/forbidden access.
 - Semantic buttons with `aria-label`s, visible focus rings, keyboard-operable admin, tunable contrast.
 - PWA manifest + icons for installability; order creation requires a live connection.
+
+---
+
+## 12. Deploy (Railway / Docker)
+
+The app is a static SPA. It ships a small, dependency-free production server (`server.mjs`) that serves
+the built `dist/` folder with the history fallback React Router needs, so a hard refresh on `/admin`,
+`/yumidev`, `/menu/c/baked` or `/t/<token>` works instead of 404-ing.
+
+| File | Purpose |
+|---|---|
+| `server.mjs` | Production static server: binds `0.0.0.0`, honours `PORT`, SPA fallback, immutable caching for hashed assets, `/healthz`, path-traversal safe |
+| `Dockerfile` | Multi-stage build (`npm install` → `npm run build` → tiny runtime with only `dist/` + `server.mjs`) |
+| `.dockerignore` | Keeps `node_modules`, `dist`, git data and env files out of the image build context |
+| `railway.json` | Tells Railway to use that Dockerfile, run `node server.mjs` and health-check `/healthz` |
+| `package.json` | `npm run build` (Vite → `dist/`), `npm start` (`node server.mjs`), `engines.node >= 20` |
+
+### Deploy on Railway
+
+1. **New Project → Deploy from GitHub repo** → pick this repository.
+2. Railway reads `railway.json` and builds the **Dockerfile** automatically — no build/start commands to
+   type, no Nixpacks guessing.
+3. **No environment variables are required** (nothing in the app reads build-time or runtime config).
+   Add only what a future backend needs.
+4. Once the health check on `/healthz` passes, open **Settings → Networking → Generate Domain** to get
+   the public URL. Point the table QR codes at `https://<your-domain>/t/<qrToken>` (Admin → QR kodlar)
+   and shorten the domain on any shortener if you print stickers.
+
+Build ≈ 1 min; the runtime image contains no `node_modules`.
+
+### Same thing locally / any other host
+
+```bash
+npm run build && npm start        # http://localhost:3000  (PORT overrides)
+docker build -t yumi . && docker run -p 3000:3000 yumi   # works on Fly, Render, VPS, k8s…
+```
+
+### Before you go live (important)
+
+1. **Rotate the developer password.** The repository is public and the demo value
+   (`/yumidev` → **Developer tools → Developer login / parol**) is known. Set a strong one — it survives a
+   factory reset by design.
+2. **Hand the admin panel to the owner:** `/yumidev` → **Topshirish (mijoz admini)** — set the owner's
+   login/password, then send them `/admin` + those credentials.
+3. **Know the data model.** The database is the browser's local storage, so each device has its own copy:
+   the guest phone, the waiter phone and the owner's desktop do **not** share one dataset over the network
+   (they share data only between tabs of the same browser). Everything works for a single-device demo, and
+   the whole domain API (`src/lib/store.tsx`) is already the single place a real server database would plug
+   in — see the note in section 1.
