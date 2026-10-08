@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { api, useDB } from "./store";
+import { dropPresence, kickTimestamp, touchPresence } from "./presence";
 import type { PermissionKey, Role, Staff } from "./types";
 import { permissionsForRole, ROLE_LABELS } from "./permissions";
 
@@ -66,19 +67,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(
     (username: string, password: string, expectedRole?: Role | Role[], branchId?: string) => {
-      const s = api.login(username, password, branchId);
-      if (!s) return { ok: false, error: "Login yoki parol xato" };
-      const allowed = expectedRole ? (Array.isArray(expectedRole) ? expectedRole : [expectedRole]) : null;
-      if (allowed && !allowed.includes(s.role)) {
+      // Role check happens BEFORE any side effects: a mismatched account never
+      // switches branches and never writes an auth log.
+      const { staff: s, roleMismatch } = api.login(username, password, branchId, expectedRole);
+      if (roleMismatch) {
         return {
           ok: false,
-          error: `Bu hisob «${ROLE_LABELS[s.role]}» roliga tegishli. Yuqoridan to‘g‘ri rolni tanlang.`,
+          error: `Bu hisob «${ROLE_LABELS[roleMismatch]}» roliga tegishli. Yuqoridan to‘g‘ri rolni tanlang.`,
         };
       }
+      if (!s) return { ok: false, error: "Login yoki parol xato" };
       try {
         localStorage.setItem(
           AUTH_KEY,
-          JSON.stringify({ staffId: s.id, branchId: branchId ?? api.activeBranchId() })
+          JSON.stringify({
+            staffId: s.id,
+            branchId: branchId ?? api.activeBranchId(),
+            loginAt: Date.now(),
+          })
         );
       } catch {
         /* noop */
@@ -93,7 +99,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       localStorage.setItem(
         AUTH_KEY,
-        JSON.stringify({ staffId: id, branchId: api.activeBranchId() })
+        JSON.stringify({ staffId: id, branchId: api.activeBranchId(), loginAt: Date.now() })
       );
     } catch {
       /* noop */
@@ -109,6 +115,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     setStaffId(null);
   }, []);
+
+  // Cross-tab heartbeat: shows every open session in the developer console
+  // "Onlayn xodimlar" card, and lets the developer kick a session out.
+  useEffect(() => {
+    touchPresence();
+    const t = setInterval(touchPresence, 20_000);
+    const onHide = () => dropPresence();
+    window.addEventListener("pagehide", onHide);
+    return () => {
+      clearInterval(t);
+      window.removeEventListener("pagehide", onHide);
+    };
+  }, []);
+
+  // Forced logout: a kick newer than this session's login time ends it.
+  useEffect(() => {
+    const check = () => {
+      if (!staffId) return;
+      try {
+        const raw = localStorage.getItem(AUTH_KEY);
+        if (!raw?.startsWith("{")) return;
+        const loginAt = (JSON.parse(raw) as { loginAt?: number }).loginAt ?? 0;
+        if (kickTimestamp(staffId, loginAt)) {
+          localStorage.removeItem(AUTH_KEY);
+          setStaffId(null);
+        }
+      } catch {
+        /* noop */
+      }
+    };
+    check();
+    const t = setInterval(check, 5_000);
+    window.addEventListener("focus", check);
+    return () => {
+      clearInterval(t);
+      window.removeEventListener("focus", check);
+    };
+  }, [staffId]);
 
   const has = useCallback(
     (key: PermissionKey) => {

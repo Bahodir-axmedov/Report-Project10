@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { FoodImage } from "@/components/FoodImage";
 import { QuantityStepper } from "@/components/customer/menu";
 import { useI18n } from "@/lib/i18n";
+import { useFeature } from "@/lib/store";
 import type { Product } from "@/lib/types";
 import { cn, fmtNumber } from "@/lib/utils";
 
@@ -68,6 +69,7 @@ export function ProductCard({
   onDec?: () => void;
 }) {
   const { localizedName, t } = useI18n();
+  const showFavorites = useFeature("favorites");
   const name = localizedName(product);
   const hasDiscount = !!product.oldPrice && product.oldPrice > product.price;
   const discountPct = hasDiscount ? Math.round((1 - product.price / product.oldPrice!) * 100) : 0;
@@ -135,7 +137,7 @@ export function ProductCard({
               </span>
             )}
           </div>
-          {onToggleFavorite && (
+          {onToggleFavorite && showFavorites && (
             <FavoriteButton
               active={!!favorite}
               onClick={(e) => {

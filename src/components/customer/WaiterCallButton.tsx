@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Bell } from "lucide-react";
-import { api } from "@/lib/store";
+import { api, useFeature } from "@/lib/store";
 import { useCustomer } from "@/lib/customer";
 import { useI18n } from "@/lib/i18n";
 import { useToast } from "@/components/ui/toast";
@@ -12,6 +12,7 @@ export function WaiterCallButton({ variant = "fab" }: { variant?: "fab" | "sideb
   const { t } = useI18n();
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
+  const waiterCallEnabled = useFeature("waiterCall");
 
   const callWaiter = (note: string) => {
     if (!table) return;
@@ -25,6 +26,9 @@ export function WaiterCallButton({ variant = "fab" }: { variant?: "fab" | "sideb
     toast({ type: "success", title: t("bill_requested"), body: t("bill_desc") });
     setOpen(false);
   };
+
+  // Developer "Bo‘limlar" o‘chirilgan bo‘lsa, tugma butunlay yo‘qoladi.
+  if (!waiterCallEnabled) return null;
 
   if (variant === "sidebar") {
     return (

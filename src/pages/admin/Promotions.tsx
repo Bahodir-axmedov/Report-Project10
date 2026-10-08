@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { Clock, Pencil, Percent, Plus, Trash2 } from "lucide-react";
-import { Badge, Button, Card, Field, Input, Modal, Switch, Textarea } from "@/components/ui/primitives";
+import { Badge, Button, Card, EmptyState, Field, Input, Modal, Switch, Textarea } from "@/components/ui/primitives";
 import { StaffPageTitle } from "@/components/staff/StaffHeader";
 import { useAuth } from "@/lib/auth";
-import { api, useDB } from "@/lib/store";
+import { api, useDB, useFeature } from "@/lib/store";
 import { useToast } from "@/components/ui/toast";
 import { uid } from "@/lib/utils";
 import type { Promotion } from "@/lib/types";
@@ -13,6 +13,18 @@ export default function Promotions() {
   const { staff } = useAuth();
   const { toast } = useToast();
   const [editing, setEditing] = useState<Promotion | null>(null);
+  const showPromotions = useFeature("promotions");
+
+  // Developer "Bo‘limlar" o‘chirsa, sahifa hech kim ko‘rinmaydi (nav yopilgan).
+  if (!showPromotions) {
+    return (
+      <EmptyState
+        icon={<Percent className="h-7 w-7" />}
+        title="Sahifa topilmadi"
+        description="Bu bo‘lim hozircha faol emas."
+      />
+    );
+  }
 
   return (
     <div className="space-y-5">

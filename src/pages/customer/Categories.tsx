@@ -6,7 +6,7 @@ import { FoodImage } from "@/components/FoodImage";
 import { SearchField, SectionHeader } from "@/components/customer/menu";
 import { EmptyState } from "@/components/ui/primitives";
 import { useI18n } from "@/lib/i18n";
-import { useDB } from "@/lib/store";
+import { useDB, useFeature } from "@/lib/store";
 import { CartBar } from "./Home";
 
 export default function Categories() {
@@ -14,7 +14,10 @@ export default function Categories() {
   const { categoryName, t } = useI18n();
   const [query, setQuery] = useState("");
 
-  const all = db.categories.filter((c) => c.visible).sort((a, b) => a.sortOrder - b.sortOrder);
+  const showPromotions = useFeature("promotions");
+  const all = db.categories
+    .filter((c) => c.visible && (showPromotions || c.slug !== "promo"))
+    .sort((a, b) => a.sortOrder - b.sortOrder);
   const categories = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return all;

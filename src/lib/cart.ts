@@ -22,6 +22,11 @@ function load(): CartMap {
 let state: CartMap = load();
 const listeners = new Set<() => void>();
 
+/** Shared immutable fallback — getSnapshot must return the SAME reference
+ * between changes, otherwise useSyncExternalStore loops forever (React
+ * "getSnapshot should be cached" crash that blanked the customer menu). */
+const EMPTY_LINES: CartLine[] = [];
+
 function commit() {
   try {
     localStorage.setItem(KEY, JSON.stringify(state));
@@ -37,7 +42,7 @@ function subscribe(cb: () => void) {
 }
 
 export function getCart(sessionKey: string): CartLine[] {
-  return state[sessionKey] ?? [];
+  return state[sessionKey] ?? EMPTY_LINES;
 }
 
 export function addToCart(sessionKey: string, productId: string, qty = 1, note?: string) {
@@ -70,8 +75,8 @@ export function clearCart(sessionKey: string) {
 export function useCart(sessionKey: string): CartLine[] {
   return useSyncExternalStore(
     subscribe,
-    () => state[sessionKey] ?? [],
-    () => state[sessionKey] ?? []
+    () => state[sessionKey] ?? EMPTY_LINES,
+    () => state[sessionKey] ?? EMPTY_LINES
   );
 }
 

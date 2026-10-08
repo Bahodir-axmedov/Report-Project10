@@ -6,7 +6,7 @@ import { Button, EmptyState, Input } from "@/components/ui/primitives";
 import { setCartQty, removeFromCart, useCart } from "@/lib/cart";
 import { useCustomer } from "@/lib/customer";
 import { useI18n } from "@/lib/i18n";
-import { useDB } from "@/lib/store";
+import { useDB, useFeature } from "@/lib/store";
 import { cn, fmtNumber } from "@/lib/utils";
 import { useState } from "react";
 
@@ -19,6 +19,7 @@ export default function Cart() {
   const [promo, setPromo] = useState("");
   const [applied, setApplied] = useState<{ code: string; pct: number } | null>(null);
   const [promoError, setPromoError] = useState<string | null>(null);
+  const showPromotions = useFeature("promotions");
 
   const items = lines
     .map((l) => ({ line: l, product: db.products.find((p) => p.id === l.productId) }))
@@ -106,6 +107,7 @@ export default function Cart() {
         ))}
       </div>
 
+      {showPromotions && (
       <div className="rounded-2xl border border-border bg-card/60 p-4">
         <div className="flex items-center gap-2">
           <Tag className="h-4 w-4 text-primary" />
@@ -124,6 +126,7 @@ export default function Cart() {
           </p>
         )}
       </div>
+      )}
 
       <div className="space-y-2 rounded-2xl border border-border bg-card/60 p-4">
         <Row label={t("subtotal")} value={`${fmtNumber(subtotal)} so‘m`} />

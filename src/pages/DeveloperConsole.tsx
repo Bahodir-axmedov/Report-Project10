@@ -1,14 +1,17 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
   AlertTriangle,
+  Bell,
   Building2,
+  Clock,
   Cog,
   Database,
   Download,
   Eye,
   Grid3x3,
+  Heart,
   KeyRound,
   ListOrdered,
   Lock,
@@ -22,14 +25,16 @@ import {
   Tags,
   Terminal,
   Trash2,
+  Truck,
   Upload,
   User as UserIcon,
   Users,
 } from "lucide-react";
-import { Badge, Button, Card, Field, Input, Tabs, Textarea, useConfirm } from "@/components/ui/primitives";
+import { Badge, Button, Card, Field, Input, Switch, Tabs, Textarea, useConfirm } from "@/components/ui/primitives";
 import { useToast, type Toast } from "@/components/ui/toast";
 import { Brand } from "@/components/Brand";
 import { api, useBranches, useDB } from "@/lib/store";
+import { forceLogout, listPresence, type PresenceEntry } from "@/lib/presence";
 import { useAuth } from "@/lib/auth";
 import { DEV_STAFF_USERNAME } from "@/lib/seed";
 import { cn, downloadBlob, fmtDateTime, fmtNumber, uid } from "@/lib/utils";
@@ -48,6 +53,7 @@ const UNLOCK_KEY = "yumi.dev.unlocked";
 type TabKey =
   | "tools"
   | "branches"
+  | "features"
   | "products"
   | "categories"
   | "orders"
@@ -63,6 +69,7 @@ type TabKey =
 const TABS: { value: TabKey; label: string }[] = [
   { value: "tools", label: "Developer tools" },
   { value: "branches", label: "Filiallar" },
+  { value: "features", label: "Bo‘limlar" },
   { value: "products", label: "Mahsulotlar" },
   { value: "categories", label: "Kategoriyalar" },
   { value: "orders", label: "Buyurtmalar" },
@@ -236,6 +243,7 @@ export default function DeveloperConsole() {
       <main className="mx-auto max-w-[1600px] px-4 py-5">
         {tab === "tools" && <DevTools onLock={lock} notify={toast} onNavigate={setTab} />}
         {tab === "branches" && <BranchesAdmin notify={toast} />}
+        {tab === "features" && <FeaturesAdmin notify={toast} />}
         {tab === "products" && <ProductsAdmin />}
         {tab === "categories" && <CategoriesAdmin />}
         {tab === "orders" && <OrdersBoard />}
@@ -248,6 +256,97 @@ export default function DeveloperConsole() {
         {tab === "logs" && <LogsPage />}
         {tab === "settings" && <SettingsPage />}
       </main>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Bo‘limlar: developer-only section switches. A disabled section disappears
+// from the customer menu, admin navigation and waiter UI for everyone else.
+// ---------------------------------------------------------------------------
+const SECTION_TOGGLES: { key: string; label: string; desc: string; icon: typeof Truck }[] = [
+  {
+    key: "delivery",
+    label: "Yetkazib berish",
+    desc: "Mijoz menyusidagi tezkor bo‘lim va checkoutdagi buyurtma turi",
+    icon: Truck,
+  },
+  {
+    key: "preorder",
+    label: "Oldindan zakaz",
+    desc: "Oldindan buyurtma bo‘limi va checkoutdagi buyurtma turi",
+    icon: Clock,
+  },
+  {
+    key: "promotions",
+    label: "Aksiyalar",
+    desc: "Promo qatlam, promokod, «Aksiyalar» kategoriyasi va admin sahifasi",
+    icon: Percent,
+  },
+  {
+    key: "favorites",
+    label: "Sevimlilar",
+    desc: "Sevimli taomlar bo‘limi, profil bloki va yurakcha tugmalari",
+    icon: Heart,
+  },
+  {
+    key: "waiterCall",
+    label: "Ofitsant chaqirish",
+    desc: "Mijoz tomonidan ofitsant/hisob chaqiruv tugmasi",
+    icon: Bell,
+  },
+];
+
+function FeaturesAdmin({ notify }: { notify: (t: Omit<Toast, "id">) => void }) {
+  const db = useDB();
+  const actor = api.devActor();
+  const isEnabled = (k: string) => db.features?.[k] !== false;
+
+  return (
+    <div className="space-y-5">
+      <Card className="p-5">
+        <h2 className="flex items-center gap-2 font-display text-base font-bold">
+          <Eye className="h-4 w-4 text-primary" /> Bo‘limlarni o‘chirish / yoqish
+        </h2>
+        <p className="mt-1 text-xs text-muted-foreground">
+          O‘chirilgan bo‘lim boshqa HECH KIM ko‘rinmaydi — mijoz menyusi, admin panel va ofitsantda
+          yo‘qoladi. Qayta yoqish faqat shu konsolda. Ta’sir barcha filiallarga bir xilda
+          tarqaladi.
+        </p>
+        <div className="mt-4 space-y-1">
+          {SECTION_TOGGLES.map((s) => (
+            <div
+              key={s.key}
+              className="flex items-center gap-3 border-t border-border/60 py-3 first:border-t-0"
+            >
+              <div
+                className={cn(
+                  "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl",
+                  isEnabled(s.key) ? "bg-primary/15 text-primary" : "bg-secondary text-muted-foreground"
+                )}
+              >
+                <s.icon className="h-5 w-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-bold">{s.label}</p>
+                <p className="truncate text-xs text-muted-foreground">{s.desc}</p>
+              </div>
+              <Switch
+                checked={isEnabled(s.key)}
+                onChange={(v) => {
+                  api.setFeatures({ [s.key]: v }, actor);
+                  notify({
+                    type: v ? "success" : "info",
+                    title: `«${s.label}» ${v ? "yoqildi" : "o‘chirildi"}`,
+                    body: v ? "Bo‘lim barcha panellarda ko‘rinadi" : "Bo‘lim faqat shu konsolda qoladi",
+                  });
+                }}
+                label={s.label}
+              />
+            </div>
+          ))}
+        </div>
+      </Card>
     </div>
   );
 }
@@ -421,6 +520,85 @@ function BranchesAdmin({ notify }: { notify: (t: Omit<Toast, "id">) => void }) {
           );
         })}
       </div>
+
+      {/* QR health check across all branches */}
+      {(() => {
+        const audit = api.qrAudit();
+        const healthy = audit.globalDuplicates === 0 && audit.invalidFormat === 0;
+        return (
+          <Card className="p-5">
+            <h2 className="flex items-center gap-2 font-display text-base font-bold">
+              <Grid3x3 className="h-4 w-4 text-primary" /> QR nazorati
+            </h2>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Barcha filiallar stol QR kodlari tekshiriladi: takroriy tokenlar va format xatolari.
+              "{healthy ? "Hammasi normal" : "Muammo topildi"}" 
+            </p>
+            <div className="mt-3 overflow-x-auto">
+              <table className="w-full min-w-[440px] text-sm">
+                <thead className="text-left text-xs uppercase text-muted-foreground">
+                  <tr>
+                    <th className="pb-2">Filial</th>
+                    <th className="pb-2 text-right">Stollar</th>
+                    <th className="pb-2 text-right">Faol emas</th>
+                    <th className="pb-2 text-right">Takroriy</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {audit.branches.map((b) => (
+                    <tr key={b.id} className="border-t border-border">
+                      <td className="py-2 font-medium">{b.name}</td>
+                      <td className="py-2 text-right">{b.tables}</td>
+                      <td className="py-2 text-right text-muted-foreground">{b.inactive}</td>
+                      <td className={cn("py-2 text-right", b.duplicate ? "font-bold text-destructive" : "text-muted-foreground")}>
+                        {b.duplicate}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="mt-2 text-xs text-muted-foreground">
+              Global takroriy: <span className={cn("font-bold", audit.globalDuplicates ? "text-destructive" : "text-foreground")}>{audit.globalDuplicates}</span>
+              {' · '}Format xato: <span className={cn("font-bold", audit.invalidFormat ? "text-destructive" : "text-foreground")}>{audit.invalidFormat}</span>
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() =>
+                  confirm(
+                    "Joriy filial QRlarini yangilash",
+                    "Barcha stollar uchun yangi xavfsiz QR tokenlar yaratiladi. Eski chop etilgan QR kodlar ishlamay qoladi. Davom etilsinmi?",
+                    () => {
+                      const n = api.regenerateAllQr([activeId], api.devActor());
+                      notify({ type: "success", title: "QR yangilandi", body: `${n} ta token yaratildi` });
+                    }
+                  )
+                }
+              >
+                <RefreshCw className="h-3.5 w-3.5" /> Joriy filial QRlarini yangilash
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() =>
+                  confirm(
+                    "Barcha filiallar QRlarini yangilash",
+                    "Barcha filiallardagi barcha stollar uchun yangi QR tokenlar yaratiladi. Eski chop etilgan QR kodlar ishlamay qoladi. Davom etilsinmi?",
+                    () => {
+                      const n = api.regenerateAllQr(undefined, api.devActor());
+                      notify({ type: "success", title: "QR yangilandi", body: `${n} ta token yaratildi` });
+                    }
+                  )
+                }
+              >
+                <RefreshCw className="h-3.5 w-3.5" /> Barcha filiallar QRlarini yangilash
+              </Button>
+            </div>
+          </Card>
+        );
+      })()}
     </div>
   );
 }
@@ -448,7 +626,17 @@ function DevTools({
   const db = useDB();
   const { confirm, node } = useConfirm();
   const [dump, setDump] = useState("");
+  const [fullDump, setFullDump] = useState("");
+  const [online, setOnline] = useState<PresenceEntry[]>([]);
   const [creds, setCreds] = useState({ username: db.dev?.username ?? "dev", password: "" });
+
+  // live presence of every open tab (admin / waiter / guest devices)
+  useEffect(() => {
+    const tick = () => setOnline(listPresence());
+    tick();
+    const t = setInterval(tick, 5_000);
+    return () => clearInterval(t);
+  }, []);
 
   // The client's own administrator account (never the hidden developer one).
   const ownerAccount = db.staff.find((s) => s.role === "ADMIN" && s.username !== DEV_STAFF_USERNAME);
@@ -516,6 +704,131 @@ function DevTools({
           </Card>
         ))}
       </div>
+
+      {/* full backup of EVERY branch in one file */}
+      <Card className="p-5">
+        <h2 className="flex items-center gap-2 font-display text-base font-bold">
+          <Database className="h-4 w-4 text-primary" /> To‘liq backup (barcha filiallar)
+        </h2>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Barcha filiallar bitta JSON faylda: stollar, QR kodlar, menyu, buyurtmalar, hisobotlar va
+          xodimlar. Tiklash hozirgi ma‘lumotni butunlay almashtiradi.
+        </p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Button
+            variant="secondary"
+            onClick={() => {
+              downloadBlob(
+                `yumi-backup-${new Date().toISOString().slice(0, 10)}.json`,
+                api.exportAllBranches(),
+                "application/json"
+              );
+              notify({
+                type: "success",
+                title: "Backup yuklab olindi",
+                body: `${api.listBranches().length} ta filial bitta faylda`,
+              });
+            }}
+          >
+            <Download className="h-4 w-4" /> Barcha filiallarni eksport qilish
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={() => setFullDump(api.exportAllBranches())}
+          >
+            <RefreshCw className="h-4 w-4" /> Joriy nusxani ko‘rsatish
+          </Button>
+        </div>
+        <Textarea
+          className="mt-3 h-40 font-mono text-[11px]"
+          value={fullDump}
+          onChange={(e) => setFullDump(e.target.value)}
+          placeholder="Backup JSON ni shu yerga qo‘ying va «Tiklash» bosing"
+        />
+        <Button
+          className="mt-3"
+          disabled={!fullDump.trim()}
+          onClick={() =>
+            confirm(
+              "Barcha filiallarni tiklash",
+              "Hozirgi BARCHA filiallar ma‘lumotlari backup fayli bilan almashtiriladi. Davom etilsinmi?",
+              () => {
+                const res = api.importAllBranches(fullDump);
+                notify(
+                  res.ok
+                    ? { type: "success", title: "Backup tiklandi" }
+                    : { type: "error", title: "Tiklash xatosi", body: res.error }
+                );
+                if (res.ok) setFullDump("");
+              }
+            )
+          }
+        >
+          <Upload className="h-4 w-4" /> Tiklash (import)
+        </Button>
+      </Card>
+
+      {/* who is online right now */}
+      <Card className="p-5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="flex items-center gap-2 font-display text-base font-bold">
+            <Users className="h-4 w-4 text-primary" /> Onlayn xodimlar
+          </h2>
+          <Button size="sm" variant="ghost" onClick={() => setOnline(listPresence())}>
+            <RefreshCw className="h-3.5 w-3.5" /> Yangilash
+          </Button>
+        </div>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Ochiq seanslar real vaqtda ko‘rinadi (20 soniyada bir yangilanadi). "Chiqarish" xodimni
+          barcha qurilmalaridan tizimdan chiqaradi.
+        </p>
+        <div className="mt-3">
+          {online.length === 0 ? (
+            <p className="rounded-xl border border-border bg-secondary/40 px-3 py-4 text-center text-sm text-muted-foreground">
+              Hozircha hech kim onlayn emas
+            </p>
+          ) : (
+            online.map((e, i) => (
+              <div
+                key={e.at + "-" + i}
+                className="flex items-center justify-between gap-3 border-t border-border/60 py-2.5 first:border-t-0"
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold">
+                    {e.name}
+                    <span className="ml-1.5 text-xs font-normal text-muted-foreground">
+                      · {e.role === "ADMIN" ? "Admin" : e.role === "WAITER" ? "Ofitsant" : "Mehmon"}
+                    </span>
+                  </p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {e.branchName} · {e.page} ·{" "}
+                    {Math.max(0, Math.round((Date.now() - e.at) / 60000))} daqiqa oldin
+                  </p>
+                </div>
+                {e.staffId && (
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    onClick={() =>
+                      confirm(
+                        "Majburiy chiqarish",
+                        `«${e.name}» barcha qurilmalaridan tizimdan chiqarilsinmi?`,
+                        () => {
+                          forceLogout(e.staffId!);
+                          setOnline(listPresence());
+                          notify({ type: "info", title: "Sessiya yakunlandi", body: e.name });
+                        }
+                      )
+                    }
+                  >
+                    Chiqarish
+                  </Button>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+      </Card>
 
       <div className="grid gap-4 lg:grid-cols-2">
         {/* export / import */}

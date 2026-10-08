@@ -6,7 +6,7 @@ import { Button, EmptyState, Textarea } from "@/components/ui/primitives";
 import { clearCart, useCart } from "@/lib/cart";
 import { useCustomer } from "@/lib/customer";
 import { useI18n } from "@/lib/i18n";
-import { api, useDB } from "@/lib/store";
+import { api, useDB, useFeature } from "@/lib/store";
 import { useToast } from "@/components/ui/toast";
 import { cn, fmtNumber } from "@/lib/utils";
 import type { OrderType } from "@/lib/types";
@@ -20,6 +20,9 @@ export default function Checkout() {
   const location = useLocation();
   const { toast } = useToast();
   const promoCode = (location.state as { promoCode?: string } | null)?.promoCode;
+
+  const showPreorder = useFeature("preorder");
+  const showDelivery = useFeature("delivery");
 
   const [type, setType] = useState<OrderType>("DINE_IN");
   const [note, setNote] = useState("");
@@ -37,18 +40,24 @@ export default function Checkout() {
     return <EmptyState icon={<ShoppingBag className="h-8 w-8" />} title={t("empty_cart")} />;
   }
 
+  // Disabled sections (developer "Bo‘limlar") never appear as an order type.
   const options: { value: OrderType; title: string; desc: string; icon: typeof Utensils }[] = [
     { value: "DINE_IN", title: t("dine_in"), desc: table ? `Stol №${table.number} · ${t("dine_in_desc")}` : t("dine_in_desc"), icon: Utensils },
-    { value: "PREORDER", title: t("preorder"), desc: t("preorder_desc"), icon: Clock },
-    { value: "DELIVERY", title: t("delivery"), desc: t("delivery_desc"), icon: Truck },
+    ...(showPreorder
+      ? [{ value: "PREORDER" as OrderType, title: t("preorder"), desc: t("preorder_desc"), icon: Clock }]
+      : []),
+    ...(showDelivery
+      ? [{ value: "DELIVERY" as OrderType, title: t("delivery"), desc: t("delivery_desc"), icon: Truck }]
+      : []),
   ];
+  const activeType: OrderType = options.some((o) => o.value === type) ? type : "DINE_IN";
 
   const submit = () => {
     setSubmitting(true);
     const order = api.createOrder({
       tableId: type === "DINE_IN" ? table?.id ?? null : table?.id ?? null,
       sessionId: session?.id ?? null,
-      type,
+      type: activeType,
       items: lines.map((l) => ({ productId: l.productId, qty: l.qty, note: l.note })),
       note,
       promoCode,

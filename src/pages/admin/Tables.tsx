@@ -219,12 +219,18 @@ export function TablesAdmin() {
 export function QrCodes() {
   const db = useDB();
   const { toast } = useToast();
-  const [selected, setSelected] = useState<string[]>(db.tables.map((t) => t.id));
+  // null = "everything selected" (the default) — so switching branches never
+  // leaves a stale id list from another branch's tables.
+  const [selected, setSelected] = useState<string[] | null>(null);
+  const selectedIds = selected ?? db.tables.map((t) => t.id);
 
   const toggle = (id: string) =>
-    setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
+    setSelected((s) => {
+      const cur = s ?? db.tables.map((t) => t.id);
+      return cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id];
+    });
 
-  const chosen = db.tables.filter((t) => selected.includes(t.id)).sort((a, b) => a.number - b.number);
+  const chosen = db.tables.filter((t) => selectedIds.includes(t.id)).sort((a, b) => a.number - b.number);
 
   return (
     <div className="space-y-5">
@@ -235,9 +241,11 @@ export function QrCodes() {
           <div className="flex gap-2">
             <Button
               variant="secondary"
-              onClick={() => setSelected(selected.length === db.tables.length ? [] : db.tables.map((t) => t.id))}
+              onClick={() =>
+                setSelected(selectedIds.length === db.tables.length ? [] : db.tables.map((t) => t.id))
+              }
             >
-              {selected.length === db.tables.length ? "Bekor qilish" : "Hammasini tanlash"}
+              {selectedIds.length === db.tables.length ? "Bekor qilish" : "Hammasini tanlash"}
             </Button>
             <Button
               onClick={() => {
@@ -257,12 +265,12 @@ export function QrCodes() {
           .slice()
           .sort((a, b) => a.number - b.number)
           .map((t) => (
-            <Card key={t.id} className={cn("p-4 transition", selected.includes(t.id) && "border-primary/60")}>
+            <Card key={t.id} className={cn("p-4 transition", selectedIds.includes(t.id) && "border-primary/60")}>
               <label className="flex cursor-pointer items-center justify-between">
                 <span className="font-display text-base font-bold">Stol №{t.number}</span>
                 <input
                   type="checkbox"
-                  checked={selected.includes(t.id)}
+                  checked={selectedIds.includes(t.id)}
                   onChange={() => toggle(t.id)}
                   className="h-4 w-4 accent-[hsl(var(--primary))]"
                 />

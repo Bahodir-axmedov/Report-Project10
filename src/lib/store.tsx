@@ -194,6 +194,26 @@ function refreshActive(): void {
   syncBranchState();
 }
 
+/** Strip URLs of the dead image host (loremflickr.com returns 401 for
+ * everyone) so <FoodImage> shows its brand fallback immediately instead of
+ * firing failing requests. Returns true when something changed. */
+function migrateDeadImages(d: DB): boolean {
+  let changed = false;
+  for (const p of d.products) {
+    if (p.image && p.image.includes("loremflickr.com")) {
+      p.image = "";
+      changed = true;
+    }
+  }
+  for (const c of d.categories) {
+    if (c.image && c.image.includes("loremflickr.com")) {
+      c.image = "";
+      changed = true;
+    }
+  }
+  return changed;
+}
+
 function load(id: string = activeId): DB {
   // The developer key belongs to the developer, not to the seeded demo data:
   // a version bump / factory reset must never roll it back to the defaults.
@@ -203,7 +223,16 @@ function load(id: string = activeId): DB {
     if (raw) {
       const parsed = JSON.parse(raw) as DB;
       if (parsed?.dev?.password) keepDev = parsed.dev;
-      if (parsed && parsed.version === CURRENT_VERSION && Array.isArray(parsed.products)) return parsed;
+      if (parsed && parsed.version === CURRENT_VERSION && Array.isArray(parsed.products)) {
+        if (migrateDeadImages(parsed)) {
+          try {
+            localStorage.setItem(branchKey(id), JSON.stringify(parsed));
+          } catch {
+            /* quota */
+          }
+        }
+        return parsed;
+      }
     }
   } catch {
     /* ignore corrupt storage */
@@ -383,15 +412,24 @@ export function getDB(): DB {
 }
 
 export function resetDemoData() {
-  // Keep the developer credentials across a factory reset (handover safety).
+  // Keep the developer credentials across a factory reset (handover safety)
+  // and the site-wide section switches (they are config, not demo data —
+  // otherwise branches would drift apart after a reset).
   const keepDev = db.dev;
+  const keepFeatures = db.features;
   refreshActive();
   localStorage.removeItem(branchKey(activeId));
   db = load();
+  let patched = false;
   if (keepDev?.password) {
     db = { ...db, dev: keepDev };
-    persist();
+    patched = true;
   }
+  if (keepFeatures) {
+    db = { ...db, features: keepFeatures };
+    patched = true;
+  }
+  if (patched) persist();
   emit();
   channel?.postMessage({ kind: "sync", at: Date.now(), branchId: activeId });
 }
@@ -441,6 +479,12 @@ export function useDB(): DB {
   );
 }
 
+/** Is this section enabled? Default: enabled (absent key = true). */
+export function useFeature(key: string): boolean {
+  const db = useDB();
+  return db.features?.[key] !== false;
+}
+
 /** Branch list + active branch for this tab (re-renders on any change). */
 export function useBranches(): { list: BranchMeta[]; activeId: string } {
   return useSyncExternalStore(
@@ -484,6 +528,16 @@ export const api = {
   activeBranchId(): string {
     refreshActive();
     return activeId;
+  },
+
+  /** Read a branch database WITHOUT moving this tab. Guest sessions are
+   * branch-scoped: while a tab is still switching branches after a
+   * cross-branch QR scan, callers must validate against the branch the record
+   * actually lives in instead of the (still stale) active database. */
+  branchDb(id: string): DB | null {
+    if (!id) return null;
+    refreshActive();
+    return id === activeId ? db : readBranch(id);
   },
 
   activeBranch(): BranchMeta {
@@ -626,31 +680,226 @@ export const api = {
     return true;
   },
 
+  /** Full backup: registry + EVERY branch database in one JSON document. */
+  exportAllBranches(): string {
+    refreshActive();
+    const payload = {
+      yumiBackup: 1,
+      exportedAt: Date.now(),
+      branches: registry.branches.map((b) => ({
+        meta: b,
+        db: b.id === activeId ? db : readBranch(b.id),
+      })),
+    };
+    return JSON.stringify(payload, null, 2);
+  },
+
+  /** Restore a backup created by `exportAllBranches` — replaces the whole
+   * branch set (metadatabases + registry) and reloads this tab. */
+  importAllBranches(raw: string): { ok: boolean; error?: string } {
+    try {
+      const parsed = JSON.parse(raw) as {
+        yumiBackup?: number;
+        branches?: { meta: BranchMeta; db: DB }[];
+      };
+      if (parsed?.yumiBackup !== 1 || !Array.isArray(parsed.branches) || !parsed.branches.length) {
+        return { ok: false, error: "Bu fayl to‘liq backup emas (yumiBackup topilmadi)" };
+      }
+      const branches: BranchMeta[] = [];
+      for (const entry of parsed.branches) {
+        const m = entry?.meta;
+        const d = entry?.db;
+        if (!m?.id || !d || !Array.isArray(d.products) || !Array.isArray(d.tables) || !Array.isArray(d.staff)) {
+          return { ok: false, error: "Backup ichida buzilgan filial ma‘lumoti bor" };
+        }
+        const meta: BranchMeta = {
+          id: String(m.id),
+          name: String(m.name || "Filial"),
+          createdAt: Number(m.createdAt) || Date.now(),
+        };
+        try {
+          localStorage.setItem(branchKey(meta.id), JSON.stringify(d));
+        } catch {
+          return { ok: false, error: "Saqlashda xato — brauzer xotirasi to‘lgan bo‘lishi mumkin" };
+        }
+        branches.push(meta);
+      }
+      registry = {
+        version: 1,
+        activeId: branches.some((b) => b.id === activeId) ? activeId : branches[0].id,
+        branches,
+      };
+      writeRegistry(registry);
+      try {
+        sessionStorage.setItem(TAB_BRANCH_KEY, activeId);
+      } catch {
+        /* noop */
+      }
+      db = load();
+      syncBranchState();
+      emit();
+      channel?.postMessage({ kind: "sync", at: Date.now(), branchId: activeId });
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : "JSON o‘qib bo‘lmadi" };
+    }
+  },
+
+  /** Health check of every table QR code across all branches. */
+  qrAudit(): {
+    branches: { id: string; name: string; tables: number; inactive: number; duplicate: number }[];
+    globalDuplicates: number;
+    invalidFormat: number;
+  } {
+    refreshActive();
+    const seen = new Map<string, number>();
+    const rows: { id: string; name: string; tables: number; inactive: number; duplicate: number }[] = [];
+    let invalidFormat = 0;
+    for (const b of registry.branches) {
+      const data = b.id === activeId ? db : readBranch(b.id);
+      const tables = data?.tables ?? [];
+      const local = new Set<string>();
+      let duplicate = 0;
+      for (const t of tables) {
+        seen.set(t.qrToken, (seen.get(t.qrToken) ?? 0) + 1);
+        if (local.has(t.qrToken)) duplicate += 1;
+        else local.add(t.qrToken);
+        if (!t.qrToken || !t.qrToken.startsWith("yumi-")) invalidFormat += 1;
+      }
+      rows.push({
+        id: b.id,
+        name: b.name,
+        tables: tables.length,
+        inactive: tables.filter((t) => !t.active).length,
+        duplicate,
+      });
+    }
+    const globalDuplicates = [...seen.values()].filter((n) => n > 1).length;
+    return { branches: rows, globalDuplicates, invalidFormat };
+  },
+
+  /** Issue fresh branch-scoped QR tokens for every table (default: all
+   * branches). Printed codes with old tokens stop working — warn the user. */
+  regenerateAllQr(branchIds?: string[], staff?: Staff | null): number {
+    refreshActive();
+    const targets = branchIds?.length ? branchIds : registry.branches.map((b) => b.id);
+    let changed = 0;
+    for (const id of targets) {
+      if (id === activeId) {
+        const count = db.tables.length;
+        mutate((d) => {
+          d.tables = d.tables.map((t) => ({ ...t, qrToken: qrTokenFor(t.number, activeId) }));
+          pushLog(
+            d,
+            staff?.role ?? "SYSTEM",
+            staff?.name ?? "Developer",
+            `Barcha QR tokenlar yangilandi (${count} ta)`,
+            "qr",
+            undefined,
+            undefined,
+            staff?.id ?? null
+          );
+        });
+        changed += count;
+      } else {
+        const other = readBranch(id);
+        if (!other) continue;
+        const tables = other.tables.map((t) => ({ ...t, qrToken: qrTokenFor(t.number, id) }));
+        const log: ActivityLog = {
+          id: uid("log"),
+          at: Date.now(),
+          staffId: staff?.id ?? null,
+          staffName: staff?.name ?? "Developer",
+          role: "SYSTEM",
+          action: `Barcha QR tokenlar yangilandi (${tables.length} ta)`,
+          entity: "qr",
+        };
+        try {
+          localStorage.setItem(
+            branchKey(id),
+            JSON.stringify({ ...other, tables, logs: [log, ...other.logs].slice(0, 500) })
+          );
+        } catch {
+          /* quota */
+        }
+        changed += tables.length;
+      }
+    }
+    emit();
+    channel?.postMessage({ kind: "sync", at: Date.now(), branchId: activeId });
+    return changed;
+  },
+
   // ---------- auth ----------
+  // ---------- bo'limlar (developer section switches) ----------
+  /**
+   * Turn whole sections on/off (delivery, preorder, promotions, favorites,
+   * waiter calls…). A disabled section disappears for everyone except this
+   * console. Site-wide: the flag is mirrored into every branch database.
+   */
+  setFeatures(patch: Record<string, boolean>, actor?: Staff | null) {
+    mutate((d) => {
+      d.features = { ...(d.features ?? {}), ...patch };
+      pushLog(
+        d,
+        actor?.role ?? "SYSTEM",
+        actor?.name ?? "Developer",
+        `Bo‘limlar: ${Object.entries(patch)
+          .map(([k, v]) => `${k} → ${v ? "yoqildi" : "o‘chirildi"}`)
+          .join(", ")}`,
+        "features",
+        undefined,
+        undefined,
+        actor?.id ?? null
+      );
+    });
+    refreshActive();
+    for (const b of registry.branches) {
+      if (b.id === activeId) continue;
+      const other = readBranch(b.id);
+      if (!other) continue;
+      try {
+        localStorage.setItem(branchKey(b.id), JSON.stringify({ ...other, features: db.features }));
+      } catch {
+        /* quota */
+      }
+    }
+  },
+
   // ---------- auth ----------
   /**
    * Sign in. `branchId` (picked on the login screen) is validated first and the
-   * tab switches to that branch only after the credentials check out. Staff are
-   * mirrored across branches, so the same login works everywhere.
+   * tab switches to that branch only after ALL checks pass. A role mismatch
+   * neither switches branches nor writes an auth log — the caller gets
+   * `roleMismatch` and decides on the message.
    */
-  login(username: string, password: string, branchId?: string): Staff | null {
+  login(
+    username: string,
+    password: string,
+    branchId?: string,
+    requireRole?: Role | Role[]
+  ): { staff: Staff | null; roleMismatch: Role | null } {
     refreshActive();
     const target = branchId && branchId !== activeId && registry.branches.some((b) => b.id === branchId)
       ? branchId
       : null;
     const source = target ? readBranch(target) : db;
-    if (!source) return null;
+    if (!source) return { staff: null, roleMismatch: null };
     const s = source.staff.find(
       (x) => x.username.toLowerCase() === username.trim().toLowerCase() && x.password === password
     );
-    if (!s || !s.active) return null;
+    if (!s || !s.active) return { staff: null, roleMismatch: null };
+    if (requireRole) {
+      const allowed = Array.isArray(requireRole) ? requireRole : [requireRole];
+      if (!allowed.includes(s.role)) return { staff: null, roleMismatch: s.role };
+    }
     if (target) setActiveBranch(target); // db reloaded to the chosen branch
     pushLog(db, s.role, s.name, "Tizimga kirdi", "auth", s.id);
     db = { ...db };
     persist();
     emit();
     channel?.postMessage({ kind: "sync", at: Date.now(), branchId: activeId });
-    return s;
+    return { staff: s, roleMismatch: null };
   },
 
   // ---------- tables ----------

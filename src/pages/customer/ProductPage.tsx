@@ -11,7 +11,7 @@ import { addToCart, setCartQty, useCart } from "@/lib/cart";
 import { useCustomer } from "@/lib/customer";
 import { useFavorites, toggleFavorite } from "@/lib/favorites";
 import { useI18n } from "@/lib/i18n";
-import { useDB } from "@/lib/store";
+import { useDB, useFeature } from "@/lib/store";
 import { useToast } from "@/components/ui/toast";
 import { cn, fmtNumber } from "@/lib/utils";
 
@@ -23,6 +23,7 @@ export default function ProductPage() {
   const { sessionKey } = useCustomer();
   const { t, localizedName, localizedDesc, categoryName } = useI18n();
   const favorites = useFavorites();
+  const showFavorites = useFeature("favorites");
   const { toast } = useToast();
   const navigate = useNavigate();
   const [qty, setQty] = useState(1);
@@ -76,16 +77,18 @@ export default function ProductPage() {
         >
           <ArrowLeft className="h-4 w-4" />
         </Link>
-        <button
-          onClick={() => toggleFavorite(product.id)}
-          aria-label={t("favorites")}
-          className={cn(
-            "absolute right-3 top-3 flex h-9 w-9 items-center justify-center rounded-full border border-white/10 bg-black/50 backdrop-blur transition",
-            isFav ? "text-primary" : "text-white/80"
-          )}
-        >
-          <Heart className={cn("h-4 w-4", isFav && "fill-primary")} />
-        </button>
+        {showFavorites && (
+          <button
+            onClick={() => toggleFavorite(product.id)}
+            aria-label={t("favorites")}
+            className={cn(
+              "absolute right-3 top-3 flex h-9 w-9 items-center justify-center rounded-full border border-white/10 bg-black/50 backdrop-blur transition",
+              isFav ? "text-primary" : "text-white/80"
+            )}
+          >
+            <Heart className={cn("h-4 w-4", isFav && "fill-primary")} />
+          </button>
+        )}
       </div>
 
       <div>

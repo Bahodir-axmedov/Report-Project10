@@ -285,6 +285,10 @@ export interface DB {
   /** developer console credentials (separate from staff accounts) */
   dev: { username: string; password: string };
   counters: { orderNumber: number };
+  /** Developer "Bo'limlar" switches: a section set to false is hidden from
+   * EVERYONE except the developer console (customer menu, admin nav, waiter
+   * UI). Absent key = enabled. Mirrored across branches — site-wide. */
+  features?: Record<string, boolean>;
 }
 
 export interface OrderStatusEvent {

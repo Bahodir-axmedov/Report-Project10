@@ -10,7 +10,7 @@ import { addToCart, setCartQty, useCart } from "@/lib/cart";
 import { useCustomer } from "@/lib/customer";
 import { useFavorites, toggleFavorite } from "@/lib/favorites";
 import { useI18n } from "@/lib/i18n";
-import { useDB } from "@/lib/store";
+import { useDB, useFeature } from "@/lib/store";
 import { useToast } from "@/components/ui/toast";
 import { cn, fmtNumber } from "@/lib/utils";
 import type { Product } from "@/lib/types";
@@ -20,11 +20,17 @@ export default function CustomerHome() {
   const { sessionKey, table } = useCustomer();
   const { t, categoryName, localizedName } = useI18n();
   const favorites = useFavorites();
+  const showPreorder = useFeature("preorder");
+  const showDelivery = useFeature("delivery");
+  const showPromotions = useFeature("promotions");
+  const showFavorites = useFeature("favorites");
   const { toast } = useToast();
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
 
-  const categories = db.categories.filter((c) => c.visible).sort((a, b) => a.sortOrder - b.sortOrder);
+  const categories = db.categories
+    .filter((c) => c.visible && (showPromotions || c.slug !== "promo"))
+    .sort((a, b) => a.sortOrder - b.sortOrder);
   const products = db.products.filter((p) => p.available);
   const popular = products.filter((p) => p.isPopular).slice(0, 6);
   const fresh = products.filter((p) => p.isNew).slice(0, 6);
@@ -145,7 +151,16 @@ export default function CustomerHome() {
       )}
 
       {/* ---------------- quick actions ---------------- */}
-      <section className="grid grid-cols-3 gap-2.5">
+      <section
+        className={cn(
+          "grid gap-2.5",
+          showPreorder && showDelivery
+            ? "grid-cols-3"
+            : showPreorder || showDelivery
+            ? "grid-cols-2"
+            : "grid-cols-1"
+        )}
+      >
         <QuickAction
           icon={Utensils}
           label={t("dine_in")}
@@ -153,12 +168,16 @@ export default function CustomerHome() {
           onClick={() => navigate("/categories")}
           accent
         />
-        <QuickAction icon={Clock} label={t("preorder")} sub={t("preorder_desc")} onClick={() => navigate("/orders")} />
-        <QuickAction icon={Truck} label={t("delivery")} sub={t("delivery_desc")} onClick={() => navigate("/about")} />
+        {showPreorder && (
+          <QuickAction icon={Clock} label={t("preorder")} sub={t("preorder_desc")} onClick={() => navigate("/orders")} />
+        )}
+        {showDelivery && (
+          <QuickAction icon={Truck} label={t("delivery")} sub={t("delivery_desc")} onClick={() => navigate("/about")} />
+        )}
       </section>
 
       {/* ---------------- promo rail ---------------- */}
-      {promo.length > 0 && (
+      {showPromotions && promo.length > 0 && (
         <section>
           <SectionHeader title={t("promo")} icon={Percent} action={{ label: t("see_all"), to: "/menu/c/promo" }} />
           <div className="no-scrollbar -mx-4 flex gap-3 overflow-x-auto px-4 pb-1">
@@ -201,7 +220,7 @@ export default function CustomerHome() {
       </section>
 
       {/* ---------------- favourites ---------------- */}
-      {favouriteProducts.length > 0 && (
+      {showFavorites && favouriteProducts.length > 0 && (
         <section>
           <SectionHeader title={t("favorites")} icon={Heart} />
           <div className="no-scrollbar -mx-4 flex gap-3 overflow-x-auto px-4 pb-1">

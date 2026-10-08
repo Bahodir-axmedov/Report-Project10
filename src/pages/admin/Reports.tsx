@@ -131,7 +131,7 @@ export function Reports() {
       </div>
 
       {/* ---------------- profit ---------------- */}
-      <Card className="p-5">
+      <Card className="min-w-0 p-5">
         <h2 className="font-display text-base font-bold">Foyda tahlili · {label}</h2>
         <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
           <KPI label="Savdo" value={`${fmtNumber(profit.revenue)} so‘m`} />
@@ -141,7 +141,7 @@ export function Reports() {
         </div>
 
         <div className="mt-5 grid gap-4 lg:grid-cols-2">
-          <div>
+          <div className="min-w-0">
             <h3 className="text-sm font-bold text-muted-foreground">Oylik foyda (6 oy)</h3>
             <div className="mt-3 h-56">
               <ResponsiveContainer width="100%" height="100%">
@@ -161,7 +161,7 @@ export function Reports() {
               </ResponsiveContainer>
             </div>
           </div>
-          <div>
+          <div className="min-w-0">
             <h3 className="text-sm font-bold text-muted-foreground">Eng foydali taomlar</h3>
             <div className="mt-3 max-h-56 space-y-2 overflow-y-auto pr-1">
               {perProductProfit.slice(0, 12).map((p) => (
@@ -192,7 +192,7 @@ export function Reports() {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <Card className="p-5">
+        <Card className="min-w-0 p-5">
           <h2 className="font-display text-base font-bold">Savdo grafigi (7 kun)</h2>
           <div className="mt-4 h-64">
             <ResponsiveContainer width="100%" height="100%">
@@ -206,7 +206,7 @@ export function Reports() {
             </ResponsiveContainer>
           </div>
         </Card>
-        <Card className="p-5">
+        <Card className="min-w-0 p-5">
           <h2 className="font-display text-base font-bold">Soatlar bo‘yicha</h2>
           <div className="mt-4 h-64">
             <ResponsiveContainer width="100%" height="100%">
@@ -222,7 +222,7 @@ export function Reports() {
         </Card>
       </div>
 
-      <Card className="p-5">
+      <Card className="min-w-0 p-5">
         <h2 className="font-display text-base font-bold">Mahsulotlar savdosi</h2>
         {s.productSales.length === 0 ? (
           <EmptyState title="Ma’lumot yo‘q" description="Tanlangan davrda buyurtmalar mavjud emas." />
@@ -280,7 +280,7 @@ export function Analytics() {
       <StaffPageTitle title="Analitika" subtitle="Oxirgi 30 kun · real savdo ma’lumotlari" />
 
       <div className="grid gap-4 lg:grid-cols-3">
-        <Card className="p-5 lg:col-span-2">
+        <Card className="min-w-0 p-5 lg:col-span-2">
           <h2 className="font-display text-base font-bold">Savdo dinamikasi (14 kun)</h2>
           <div className="mt-4 h-72">
             <ResponsiveContainer width="100%" height="100%">
@@ -297,7 +297,7 @@ export function Analytics() {
           </div>
         </Card>
 
-        <Card className="p-5">
+        <Card className="min-w-0 p-5">
           <h2 className="font-display text-base font-bold">Kategoriya ulushi</h2>
           <div className="mt-2 h-72">
             {categoryData.length === 0 ? (
@@ -327,7 +327,7 @@ export function Analytics() {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <Card className="p-5">
+        <Card className="min-w-0 p-5">
           <h2 className="font-display text-base font-bold">Ofitsantlar samaradorligi</h2>
           <div className="mt-4 overflow-x-auto">
             <table className="w-full min-w-[520px] text-sm">
@@ -360,7 +360,7 @@ export function Analytics() {
           </div>
         </Card>
 
-        <Card className="p-5">
+        <Card className="min-w-0 p-5">
           <h2 className="font-display text-base font-bold">Stollar yuklamasi</h2>
           <div className="mt-4 h-72">
             <ResponsiveContainer width="100%" height="100%">

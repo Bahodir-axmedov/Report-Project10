@@ -54,7 +54,11 @@ export default function AdminLayout() {
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const pendingCalls = db.calls.filter((c) => c.status === "PENDING").length;
-  const items = NAV.filter((n) => !n.perm || hasPermission(staff?.permissions, n.perm));
+  // Developer "Bo‘limlar" — a disabled section is not even listed here.
+  const showPromotions = db.features?.promotions !== false;
+  const items = NAV.filter((n) => !n.perm || hasPermission(staff?.permissions, n.perm)).filter(
+    (n) => n.to !== "/admin/promotions" || showPromotions
+  );
 
   return (
     <div className="min-h-full bg-background">

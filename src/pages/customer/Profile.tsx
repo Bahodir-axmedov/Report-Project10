@@ -8,7 +8,7 @@ import { useCustomer } from "@/lib/customer";
 import { useFavorites } from "@/lib/favorites";
 import { useI18n } from "@/lib/i18n";
 import { useNotify } from "@/lib/notifications";
-import { useDB } from "@/lib/store";
+import { useDB, useFeature } from "@/lib/store";
 import { fmtDateTime } from "@/lib/utils";
 
 export default function Profile() {
@@ -16,6 +16,7 @@ export default function Profile() {
   const { table, session, leave } = useCustomer();
   const { t } = useI18n();
   const favorites = useFavorites();
+  const showFavorites = useFeature("favorites");
   const { settings, setSettings, enable } = useNotify();
   const navigate = useNavigate();
 
@@ -80,6 +81,7 @@ export default function Profile() {
         </div>
       </Card>
 
+      {showFavorites && (
       <Card className="p-5">
         <h2 className="flex items-center gap-2 text-sm font-bold">
           <Heart className="h-4 w-4 text-primary" /> {t("favorites")}
@@ -97,6 +99,7 @@ export default function Profile() {
           </div>
         )}
       </Card>
+      )}
 
       <Card className="p-5">
         <h2 className="text-sm font-bold">{t("about")}</h2>

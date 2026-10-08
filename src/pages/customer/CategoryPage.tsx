@@ -9,7 +9,7 @@ import { addToCart, setCartQty, useCart } from "@/lib/cart";
 import { useCustomer } from "@/lib/customer";
 import { useFavorites, toggleFavorite } from "@/lib/favorites";
 import { useI18n } from "@/lib/i18n";
-import { useDB } from "@/lib/store";
+import { useDB, useFeature } from "@/lib/store";
 import { useToast } from "@/components/ui/toast";
 import { CartBar } from "./Home";
 import type { Product } from "@/lib/types";
@@ -23,12 +23,16 @@ export default function CategoryPage() {
   const { sessionKey } = useCustomer();
   const { t, categoryName, localizedName } = useI18n();
   const favorites = useFavorites();
+  const showPromotions = useFeature("promotions");
   const { toast } = useToast();
   const [filter, setFilter] = useState<Filter>("all");
   const [sort, setSort] = useState<Sort>("recommended");
   const [query, setQuery] = useState("");
 
-  const category = db.categories.find((c) => c.slug === slug);
+  // A disabled «Aksiyalar» section is not even addressable by URL.
+  const category = db.categories.find(
+    (c) => c.slug === slug && (showPromotions || c.slug !== "promo")
+  );
 
   const products = useMemo(() => {
     let list = db.products.filter((p) => p.categoryId === category?.id && p.available);
@@ -113,7 +117,7 @@ export default function CategoryPage() {
               { value: "all", label: t("all") },
               { value: "popular", label: t("popular") },
               { value: "new", label: t("new") },
-              { value: "promo", label: t("promo") },
+              ...(showPromotions ? [{ value: "promo" as Filter, label: t("promo") }] : []),
             ]}
           />
           <label className="relative flex shrink-0 items-center gap-1.5 rounded-full border border-border bg-secondary/50 px-3 py-1.5 text-xs font-semibold text-muted-foreground">

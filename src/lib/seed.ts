@@ -9,10 +9,13 @@ import type {
 import { permissionsForRole } from "./permissions";
 import { randomToken, uid } from "./utils";
 
-// Real food photography via a keyword-based image service, with a graceful
-// gradient+emoji fallback in the <FoodImage> component if it can't load.
-function foodImg(keyword: string, lock: number): string {
-  return `https://loremflickr.com/800/800/${encodeURIComponent(keyword)}?lock=${lock}`;
+// The previous keyword-image service (loremflickr.com) now answers 401 for
+// every request, which broke ALL food photos. We intentionally ship without an
+// external image host: <FoodImage> renders the on-brand gradient + emoji
+// fallback instantly (no broken requests, no flash), and the client can set
+// real photos per product from the admin panel.
+function foodImg(_keyword: string, _lock: number): string {
+  return "";
 }
 
 const CATEGORY_DEFS: { slug: string; uz: string; ru: string; en: string; icon: string; img: string }[] = [

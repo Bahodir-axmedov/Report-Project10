@@ -1,13 +1,22 @@
 import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { Search, XCircle } from "lucide-react";
+import { Download, Search, XCircle } from "lucide-react";
 import { Button, Card, Input, Select, Tabs } from "@/components/ui/primitives";
 import { StaffPageTitle } from "@/components/staff/StaffHeader";
 import { OrderStatusBadge } from "@/components/staff/widgets";
 import { useAuth } from "@/lib/auth";
 import { api, useDB } from "@/lib/store";
 import { useToast } from "@/components/ui/toast";
-import { canTransition, cn, fmtNumber, fmtTime, orderNumberLabel } from "@/lib/utils";
+import {
+  canTransition,
+  cn,
+  downloadBlob,
+  fmtDateTime,
+  fmtNumber,
+  fmtTime,
+  orderNumberLabel,
+  toCSV,
+} from "@/lib/utils";
 import type { Order, OrderStatus } from "@/lib/types";
 
 const COLUMNS: OrderStatus[] = ["NEW", "ACCEPTED", "PREPARING", "READY", "DELIVERED", "COMPLETED", "CANCELLED"];
@@ -42,6 +51,25 @@ export default function OrdersBoard() {
     });
   }, [db.orders, query, typeFilter]);
 
+  const exportCsv = () => {
+    const rows: (string | number)[][] = [
+      ["Buyurtma", "Vaqt", "Stol", "Turi", "Status", "Taomlar", "Summa", "To‘langan", "Xodim"],
+      ...filtered.map((o) => [
+        orderNumberLabel(o.number),
+        fmtDateTime(o.createdAt),
+        o.tableLabel,
+        o.type,
+        o.status,
+        o.items.map((i) => `${i.nameUz} x${i.qty}`).join("; "),
+        o.total,
+        o.paid ? "Ha" : "Yo‘q",
+        db.staff.find((s) => s.id === o.createdByStaffId)?.name ?? "—",
+      ]),
+    ];
+    downloadBlob(`yumi-buyurtmalar-${Date.now()}.csv`, toCSV(rows), "text/csv;charset=utf-8");
+    toast({ type: "info", title: "CSV yuklab olindi", body: `${filtered.length} buyurtma` });
+  };
+
   const advance = (o: Order, to: OrderStatus) => {
     if (!staff) return;
     if (!canTransition(o.status, to)) {
@@ -54,7 +82,15 @@ export default function OrdersBoard() {
 
   return (
     <div className="space-y-5">
-      <StaffPageTitle title="Buyurtmalar" subtitle={`${filtered.length} buyurtma · kanban va jadval ko‘rinishi`} />
+      <StaffPageTitle
+        title="Buyurtmalar"
+        subtitle={`${filtered.length} buyurtma · kanban va jadval ko‘rinishi`}
+        action={
+          <Button variant="secondary" onClick={exportCsv}>
+            <Download className="h-4 w-4" /> CSV
+          </Button>
+        }
+      />
 
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative min-w-[220px] flex-1">

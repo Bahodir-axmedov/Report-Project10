@@ -24,7 +24,12 @@ interface CustomerValue {
   session: TableSession | null;
   table: RestaurantTable | null;
   sessionKey: string;
-  enterWithToken: (token: string) => { ok: boolean; error?: string };
+  /** Resolves a QR token across ALL branches (switches this tab into the
+   * owning branch) and opens a session there. Returns the resolved table so
+   * callers never have to re-search the local database. */
+  enterWithToken: (
+    token: string
+  ) => { ok: boolean; error?: string; table?: RestaurantTable; number?: number };
   leave: () => void;
 }
 
@@ -55,9 +60,19 @@ export function CustomerProvider({ children }: { children: ReactNode }) {
     }
   });
 
+  // A guest session lives in exactly ONE branch (QR tokens map 1:1 to a
+  // branch). While this tab is still switching branches after a cross-branch
+  // scan, `db` can be one render behind — resolving against the branch the
+  // session belongs to keeps both the session and its table stable.
+  const sourceDb = useMemo(() => {
+    const id = stored?.branchId;
+    if (!id) return db;
+    return api.branchDb(id) ?? db;
+  }, [db, stored?.branchId]);
+
   const session = useMemo(
-    () => (stored ? db.sessions.find((s) => s.id === stored.sessionId) ?? null : null),
-    [db.sessions, stored]
+    () => (stored ? sourceDb.sessions.find((s) => s.id === stored.sessionId) ?? null : null),
+    [sourceDb.sessions, stored]
   );
   // The table only resolves while its session is still *active*, so a dangling,
   // closed or reset session can never be used to place an order (checked at
@@ -65,19 +80,21 @@ export function CustomerProvider({ children }: { children: ReactNode }) {
   const table = useMemo(
     () =>
       stored && session && session.active
-        ? db.tables.find((t) => t.id === stored.tableId) ?? null
+        ? sourceDb.tables.find((t) => t.id === stored.tableId) ?? null
         : null,
-    [db.tables, stored, session]
+    [sourceDb.tables, stored, session]
   );
 
   // Drop a stored session that no longer exists in the database (e.g. after a
   // data reset/version bump), was closed by staff, or whose table was removed,
   // so the guest is asked to scan again instead of acting on a stale reference.
+  // Checked against the session's OWN branch: a QR from another branch must
+  // never look like a dead session just because the tab hasn't caught up yet.
   useEffect(() => {
     if (!stored) return;
-    const live = db.sessions.find((s) => s.id === stored.sessionId);
+    const live = sourceDb.sessions.find((s) => s.id === stored.sessionId);
     const sessionGone = !live || !live.active;
-    const tableGone = !db.tables.some((t) => t.id === stored.tableId);
+    const tableGone = !sourceDb.tables.some((t) => t.id === stored.tableId);
     if (sessionGone || tableGone) {
       try {
         localStorage.removeItem(KEY);
@@ -86,7 +103,7 @@ export function CustomerProvider({ children }: { children: ReactNode }) {
       }
       setStored(null);
     }
-  }, [stored, db.sessions, db.tables]);
+  }, [stored, sourceDb]);
 
   const enterWithToken = useCallback(
     (token: string) => {
@@ -109,7 +126,7 @@ export function CustomerProvider({ children }: { children: ReactNode }) {
         /* noop */
       }
       setStored(next);
-      return { ok: true };
+      return { ok: true, table: t, number: t.number };
     },
     []
   );

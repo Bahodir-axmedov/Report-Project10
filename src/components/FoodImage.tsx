@@ -41,8 +41,8 @@ export function FoodImage({
           status === "loading" && "animate-pulse"
         )}
         style={{
-          background:
-            "radial-gradient(120% 120% at 20% 0%, hsl(356 40% 22%) 0%, hsl(240 6% 8%) 60%)",
+          // subtle per-dish hue variation (brand red family) so tiles are not identical
+          background: `radial-gradient(120% 120% at 20% 0%, hsl(${340 + (hash(alt) % 30)} 40% 22%) 0%, hsl(240 6% 8%) 60%)`,
         }}
       >
         <span className="drop-shadow">{fallback}</span>
