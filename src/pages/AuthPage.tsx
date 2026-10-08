@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
   ArrowLeft,
+  Building2,
   LayoutDashboard,
   Lock,
   ShieldCheck,
@@ -12,6 +13,7 @@ import {
 import { Brand } from "@/components/Brand";
 import { Button, Field, Input } from "@/components/ui/primitives";
 import { useAuth } from "@/lib/auth";
+import { useBranches } from "@/lib/store";
 import type { Role } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -49,22 +51,28 @@ const ROLE_OPTIONS: RoleOption[] = [
 
 export default function AuthPage() {
   const { login } = useAuth();
+  const { list: branches, activeId } = useBranches();
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const returnTo = params.get("returnTo");
 
   const [selected, setSelected] = useState<RoleOption | null>(null);
+  const [branchId, setBranchId] = useState<string | null>(null);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  // Several kitchens → pick the branch BEFORE signing in; a single branch
+  // skips the step entirely.
+  const needBranchStep = !!selected && branches.length > 1 && !branchId;
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!selected) return;
     setError(null);
     setLoading(true);
-    const res = login(username, password, selected.roles);
+    const res = login(username, password, selected.roles, branchId ?? undefined);
     setLoading(false);
     if (!res.ok) {
       setError(res.error ?? "Xatolik");
@@ -76,6 +84,7 @@ export default function AuthPage() {
 
   const pick = (r: RoleOption) => {
     setSelected(r);
+    setBranchId(null);
     setError(null);
     setUsername("");
     setPassword("");
@@ -136,28 +145,91 @@ export default function AuthPage() {
               Mijozlar tizimga kirmaydi — stol QR kodini skanerlab buyurtma beradi.
             </p>
           </motion.div>
+        ) : needBranchStep ? (
+          <motion.div
+            key="branch-step"
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mx-auto max-w-3xl"
+          >
+            <div className="text-center">
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/15 text-primary">
+                <Building2 className="h-7 w-7" />
+              </div>
+              <h1 className="mt-4 font-display text-2xl font-extrabold sm:text-3xl">Filialni tanlang</h1>
+              <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
+                «{selected.label}» hisobi bilan qaysi oshxonada ishlashni tanlang. Filiallar ma’lumoti
+                bir-biridan mustaqil — stollar, QR kodlar va buyurtmalar arashmaydi.
+              </p>
+            </div>
+
+            <div className="mx-auto mt-8 grid max-w-2xl gap-3 sm:grid-cols-2">
+              {branches.map((b, i) => (
+                <motion.button
+                  key={b.id}
+                  initial={{ opacity: 0, y: 14 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: i * 0.05 }}
+                  onClick={() => {
+                    setBranchId(b.id);
+                    setError(null);
+                    setUsername("");
+                    setPassword("");
+                  }}
+                  className={cn(
+                    "group flex items-center gap-4 rounded-2xl border border-border bg-card/60 p-4 text-left transition hover:border-primary/50 hover:bg-primary/5",
+                    b.id === activeId && "border-primary/50 bg-primary/5"
+                  )}
+                >
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-primary/15 text-primary">
+                    <Building2 className="h-6 w-6" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="font-display text-base font-bold">{b.name}</p>
+                    <p className="mt-0.5 text-xs leading-snug text-muted-foreground">
+                      {new Date(b.createdAt).toLocaleDateString("uz-UZ")} dan beri
+                    </p>
+                  </div>
+                </motion.button>
+              ))}
+            </div>
+
+            <button
+              onClick={() => setSelected(null)}
+              className="mx-auto mt-8 flex items-center gap-1.5 text-xs font-semibold text-muted-foreground transition hover:text-foreground"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" /> Rolni o‘zgartirish
+            </button>
+          </motion.div>
         ) : (
           <motion.div
-            key={selected.key}
+            key={selected.key + (branchId ?? "")}
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
             className="mx-auto max-w-md"
           >
             <div className="glass rounded-3xl p-6 sm:p-8">
               <button
-                onClick={() => setSelected(null)}
+                onClick={() => (branches.length > 1 ? setBranchId(null) : setSelected(null))}
                 className="mb-5 flex items-center gap-1.5 text-xs font-semibold text-muted-foreground transition hover:text-foreground"
               >
-                <ArrowLeft className="h-3.5 w-3.5" /> Rolni o‘zgartirish
+                <ArrowLeft className="h-3.5 w-3.5" />{" "}
+                {branches.length > 1 ? "Filialni o‘zgartirish" : "Rolni o‘zgartirish"}
               </button>
 
               <div className="flex items-center gap-3">
                 <div className={cn("flex h-11 w-11 items-center justify-center rounded-2xl bg-primary/15 text-primary")}>
                   <selected.icon className="h-5 w-5" />
                 </div>
-                <div>
+                <div className="min-w-0">
                   <p className="text-[11px] uppercase tracking-widest text-muted-foreground">Tanlangan rol</p>
                   <p className="font-display text-lg font-bold">{selected.label}</p>
+                  {branches.length > 1 && (
+                    <p className="mt-0.5 flex items-center gap-1 text-xs text-primary">
+                      <Building2 className="h-3.5 w-3.5" />
+                      {branches.find((b) => b.id === (branchId ?? activeId))?.name}
+                    </p>
+                  )}
                 </div>
               </div>
 

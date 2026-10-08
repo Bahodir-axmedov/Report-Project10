@@ -257,6 +257,17 @@ export interface RestaurantSettings {
   servicePercent: number;
 }
 
+/**
+ * A branch (filial) — a second kitchen with its own tables, QR codes, orders
+ * and reports. Staff accounts live across branches: you sign in once and pick
+ * the branch at login.
+ */
+export interface BranchMeta {
+  id: string;
+  name: string;
+  createdAt: number;
+}
+
 export interface DB {
   version: number;
   staff: Staff[];

@@ -16,6 +16,8 @@ interface Stored {
   sessionId: string;
   tableId: string;
   createdAt: number;
+  /** Branch this guest session belongs to (QR tokens map 1:1 to a branch). */
+  branchId?: string;
 }
 
 interface CustomerValue {
@@ -88,11 +90,19 @@ export function CustomerProvider({ children }: { children: ReactNode }) {
 
   const enterWithToken = useCallback(
     (token: string) => {
+      // Resolving a QR from another branch moves this tab into that branch,
+      // so the session is created in the correct database — branches never
+      // share tables, orders or sessions.
       const t = api.resolveTableByToken(token);
       if (!t) return { ok: false, error: "QR kod yaroqsiz yoki topilmadi" };
       if (!t.active) return { ok: false, error: "Bu stol hozircha faol emas" };
       const s = api.getOrCreateSession(t.id, deviceId());
-      const next: Stored = { sessionId: s.id, tableId: t.id, createdAt: Date.now() };
+      const next: Stored = {
+        sessionId: s.id,
+        tableId: t.id,
+        createdAt: Date.now(),
+        branchId: api.activeBranchId(),
+      };
       try {
         localStorage.setItem(KEY, JSON.stringify(next));
       } catch {

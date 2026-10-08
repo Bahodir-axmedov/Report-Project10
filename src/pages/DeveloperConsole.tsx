@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
   AlertTriangle,
+  Building2,
   Cog,
   Database,
   Download,
@@ -13,11 +14,14 @@ import {
   Lock,
   LogOut,
   Package,
+  Pencil,
   Percent,
+  Plus,
   RefreshCw,
   ShieldCheck,
   Tags,
   Terminal,
+  Trash2,
   Upload,
   User as UserIcon,
   Users,
@@ -25,7 +29,7 @@ import {
 import { Badge, Button, Card, Field, Input, Tabs, Textarea, useConfirm } from "@/components/ui/primitives";
 import { useToast, type Toast } from "@/components/ui/toast";
 import { Brand } from "@/components/Brand";
-import { api, useDB } from "@/lib/store";
+import { api, useBranches, useDB } from "@/lib/store";
 import { useAuth } from "@/lib/auth";
 import { DEV_STAFF_USERNAME } from "@/lib/seed";
 import { cn, downloadBlob, fmtDateTime, fmtNumber, uid } from "@/lib/utils";
@@ -43,6 +47,7 @@ const UNLOCK_KEY = "yumi.dev.unlocked";
 
 type TabKey =
   | "tools"
+  | "branches"
   | "products"
   | "categories"
   | "orders"
@@ -57,6 +62,7 @@ type TabKey =
 
 const TABS: { value: TabKey; label: string }[] = [
   { value: "tools", label: "Developer tools" },
+  { value: "branches", label: "Filiallar" },
   { value: "products", label: "Mahsulotlar" },
   { value: "categories", label: "Kategoriyalar" },
   { value: "orders", label: "Buyurtmalar" },
@@ -72,6 +78,7 @@ const TABS: { value: TabKey; label: string }[] = [
 
 export default function DeveloperConsole() {
   const db = useDB();
+  const { list: branches, activeId } = useBranches();
   const { loginAs, logout } = useAuth();
   const { toast } = useToast();
   const [unlocked, setUnlocked] = useState<boolean>(() => {
@@ -207,6 +214,12 @@ export default function DeveloperConsole() {
             <span className="font-display text-base font-extrabold">Developer Console</span>
           </span>
           <Badge tone="primary">100% nazorat</Badge>
+          {branches.length > 1 && (
+            <span className="flex items-center gap-1.5 rounded-full border border-primary/40 bg-primary/10 px-2.5 py-1 text-xs font-semibold text-primary">
+              <Building2 className="h-3.5 w-3.5" />
+              {branches.find((b) => b.id === activeId)?.name}
+            </span>
+          )}
           <div className="flex-1" />
           <Link to="/admin" className="text-xs font-semibold text-muted-foreground hover:text-foreground">
             Admin panel →
@@ -222,6 +235,7 @@ export default function DeveloperConsole() {
 
       <main className="mx-auto max-w-[1600px] px-4 py-5">
         {tab === "tools" && <DevTools onLock={lock} notify={toast} onNavigate={setTab} />}
+        {tab === "branches" && <BranchesAdmin notify={toast} />}
         {tab === "products" && <ProductsAdmin />}
         {tab === "categories" && <CategoriesAdmin />}
         {tab === "orders" && <OrdersBoard />}
@@ -234,6 +248,179 @@ export default function DeveloperConsole() {
         {tab === "logs" && <LogsPage />}
         {tab === "settings" && <SettingsPage />}
       </main>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Branches (filiallar): every branch owns a completely separate database —
+// own tables + QR codes (numbering from 1), menu, orders and reports.
+// ---------------------------------------------------------------------------
+function BranchesAdmin({ notify }: { notify: (t: Omit<Toast, "id">) => void }) {
+  const { list: branches, activeId } = useBranches();
+  const { confirm, node } = useConfirm();
+  const [name, setName] = useState("");
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+
+  const create = () => {
+    const clean = name.trim();
+    if (!clean) {
+      notify({ type: "error", title: "Filial nomini kiriting" });
+      return;
+    }
+    if (branches.some((b) => b.name.toLowerCase() === clean.toLowerCase())) {
+      notify({ type: "error", title: "Bu nomli filial allaqachon bor" });
+      return;
+    }
+    const meta = api.createBranch(clean);
+    setName("");
+    notify({
+      type: "success",
+      title: "Filial yaratildi",
+      body: `${meta.name} — stollar va QR kodlar 1 dan boshlanadi`,
+    });
+  };
+
+  return (
+    <div className="space-y-5">
+      {node}
+      <Card className="p-5">
+        <h2 className="flex items-center gap-2 font-display text-base font-bold">
+          <Building2 className="h-4 w-4 text-primary" /> Yangi filial (oshxona)
+        </h2>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Har bir filial alohida bazada ishlaydi: o‘z stollari, QR kodlari (1 dan), menyu,
+          buyurtmalari va hisobotlari. Xodimlar hisoblari esa bir xil — kirishda filial
+          tanlanadi.
+        </p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Filial nomi (masalan: Yunusobod filiali)"
+            className="max-w-sm flex-1"
+            onKeyDown={(e) => e.key === "Enter" && create()}
+          />
+          <Button onClick={create}>
+            <Plus className="h-4 w-4" /> Filial qo‘shish
+          </Button>
+        </div>
+      </Card>
+
+      <div className="grid gap-3 lg:grid-cols-2">
+        {branches.map((b) => {
+          const stats = api.branchStats(b.id);
+          const active = b.id === activeId;
+          return (
+            <Card key={b.id} className={cn("p-5", active && "border-primary/60")}>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  {renaming === b.id ? (
+                    <div className="flex gap-2">
+                      <Input
+                        value={renameValue}
+                        onChange={(e) => setRenameValue(e.target.value)}
+                        className="h-9 w-44"
+                        autoFocus
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && renameValue.trim()) {
+                            api.renameBranch(b.id, renameValue);
+                            setRenaming(null);
+                            notify({ type: "success", title: "Filial nomi yangilandi" });
+                          }
+                          if (e.key === "Escape") setRenaming(null);
+                        }}
+                      />
+                      <Button
+                        size="sm"
+                        onClick={() => {
+                          if (!renameValue.trim()) return;
+                          api.renameBranch(b.id, renameValue);
+                          setRenaming(null);
+                          notify({ type: "success", title: "Filial nomi yangilandi" });
+                        }}
+                      >
+                        Saqlash
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-display text-base font-bold">{b.name}</h3>
+                      {active && <Badge tone="primary">Joriy</Badge>}
+                    </div>
+                  )}
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {new Date(b.createdAt).toLocaleDateString("uz-UZ")} dan beri
+                  </p>
+                  <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                    <span>
+                      <span className="font-semibold text-foreground">{stats.tables}</span> stol
+                      (QR 1 dan)
+                    </span>
+                    <span>
+                      <span className="font-semibold text-foreground">{stats.orders}</span> buyurtma
+                    </span>
+                    <span>
+                      <span className="font-semibold text-foreground">{stats.products}</span> taom
+                    </span>
+                    <span>
+                      <span className="font-semibold text-foreground">{stats.staff}</span> xodim
+                    </span>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {!active && (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => {
+                        if (!api.switchBranch(b.id)) {
+                          notify({ type: "error", title: "Filialga o‘tib bo‘lmadi" });
+                          return;
+                        }
+                        notify({ type: "info", title: `«${b.name}» filialiga o‘tildi` });
+                      }}
+                    >
+                      Tanlash
+                    </Button>
+                  )}
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      setRenaming(b.id);
+                      setRenameValue(b.name);
+                    }}
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    disabled={branches.length <= 1}
+                    onClick={() =>
+                      confirm(
+                        "Filialni o‘chirish",
+                        `«${b.name}» va barcha ma’lumotlari (stollar, QR, buyurtmalar) butunlay o‘chiriladi. Davom etilsinmi?`,
+                        () => {
+                          if (api.deleteBranch(b.id)) {
+                            notify({ type: "info", title: `«${b.name}» o‘chirildi` });
+                          } else {
+                            notify({ type: "error", title: "Oxirgi filialni o‘chirib bo‘lmaydi" });
+                          }
+                        }
+                      )
+                    }
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              </div>
+            </Card>
+          );
+        })}
+      </div>
     </div>
   );
 }

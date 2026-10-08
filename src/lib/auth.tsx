@@ -15,8 +15,15 @@ const AUTH_KEY = "yumi.auth.v1";
 
 interface AuthValue {
   staff: Staff | null;
-  /** Sign in. When `expectedRole` is given the account must match that role (or one of them). */
-  login: (username: string, password: string, expectedRole?: Role | Role[]) => { ok: boolean; error?: string };
+  /** Sign in. When `expectedRole` is given the account must match that role (or one of them).
+   * `branchId` is the branch picked on the login screen — the tab switches to it
+   * only after the credentials check out. */
+  login: (
+    username: string,
+    password: string,
+    expectedRole?: Role | Role[],
+    branchId?: string
+  ) => { ok: boolean; error?: string };
   /** Trusted sign-in used by the developer console after it verifies its own credentials. */
   loginAs: (staffId: string) => void;
   logout: () => void;
@@ -30,7 +37,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const db = useDB();
   const [staffId, setStaffId] = useState<string | null>(() => {
     try {
-      return localStorage.getItem(AUTH_KEY);
+      const raw = localStorage.getItem(AUTH_KEY);
+      if (!raw) return null;
+      // New format: {staffId, branchId}; legacy: plain staff id.
+      if (raw.startsWith("{")) return (JSON.parse(raw) as { staffId?: string }).staffId ?? null;
+      return raw;
     } catch {
       return null;
     }
@@ -54,8 +65,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [staffId, staff]);
 
   const login = useCallback(
-    (username: string, password: string, expectedRole?: Role | Role[]) => {
-      const s = api.login(username, password);
+    (username: string, password: string, expectedRole?: Role | Role[], branchId?: string) => {
+      const s = api.login(username, password, branchId);
       if (!s) return { ok: false, error: "Login yoki parol xato" };
       const allowed = expectedRole ? (Array.isArray(expectedRole) ? expectedRole : [expectedRole]) : null;
       if (allowed && !allowed.includes(s.role)) {
@@ -65,7 +76,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         };
       }
       try {
-        localStorage.setItem(AUTH_KEY, s.id);
+        localStorage.setItem(
+          AUTH_KEY,
+          JSON.stringify({ staffId: s.id, branchId: branchId ?? api.activeBranchId() })
+        );
       } catch {
         /* noop */
       }
@@ -77,7 +91,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const loginAs = useCallback((id: string) => {
     try {
-      localStorage.setItem(AUTH_KEY, id);
+      localStorage.setItem(
+        AUTH_KEY,
+        JSON.stringify({ staffId: id, branchId: api.activeBranchId() })
+      );
     } catch {
       /* noop */
     }

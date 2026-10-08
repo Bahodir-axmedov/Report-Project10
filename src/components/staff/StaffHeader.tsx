@@ -1,12 +1,12 @@
 import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import { Bell, BellRing, CheckCheck, LogOut, Volume2, VolumeX, Mic, MicOff } from "lucide-react";
+import { Bell, BellRing, Building2, CheckCheck, LogOut, Volume2, VolumeX, Mic, MicOff } from "lucide-react";
 import { Brand } from "@/components/Brand";
 import { Button } from "@/components/ui/primitives";
 import { useAuth } from "@/lib/auth";
 import { useNotify } from "@/lib/notifications";
-import { api, useDB } from "@/lib/store";
+import { api, useBranches, useDB } from "@/lib/store";
 import { ROLE_LABELS } from "@/lib/permissions";
 import { cn, fmtTime } from "@/lib/utils";
 
@@ -22,6 +22,7 @@ export function StaffHeader({
   const { staff, logout } = useAuth();
   const { settings, setSettings, enable } = useNotify();
   const db = useDB();
+  const { list: branches, activeId } = useBranches();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
 
@@ -30,7 +31,7 @@ export function StaffHeader({
 
   return (
     <header className="sticky top-0 z-40 border-b border-border bg-background/85 backdrop-blur-xl">
-      <div className="mx-auto flex h-16 max-w-[1600px] items-center gap-3 px-4">
+      <div className="mx-auto flex h-16 max-w-[1600px] items-center gap-2 px-3 sm:gap-3 sm:px-4">
         <Link to="/" className="lg:hidden">
           <Brand size="sm" tagline={false} />
         </Link>
@@ -39,6 +40,29 @@ export function StaffHeader({
         </div>
         {accent}
         <div className="flex-1" />
+
+        {branches.length > 1 && (
+          <label
+            className="flex h-10 min-w-0 items-center gap-1.5 rounded-xl border border-primary/40 bg-primary/10 pl-2 pr-1 text-primary"
+            title="Filialni tanlash"
+          >
+            <Building2 className="h-4 w-4 shrink-0" />
+            <select
+              value={activeId}
+              onChange={(e) => {
+                api.switchBranch(e.target.value);
+              }}
+              aria-label="Filialni tanlash"
+              className="h-8 max-w-[6.5rem] cursor-pointer truncate bg-transparent text-xs font-semibold text-foreground outline-none sm:max-w-[11rem]"
+            >
+              {branches.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
 
         <button
           onClick={() => setSettings({ sound: !settings.sound })}

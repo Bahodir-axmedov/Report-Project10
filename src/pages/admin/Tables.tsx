@@ -17,7 +17,10 @@ export function TablesAdmin() {
   const { toast } = useToast();
   const [selected, setSelected] = useState<RestaurantTable | null>(null);
   const [addOpen, setAddOpen] = useState(false);
-  const [draft, setDraft] = useState({ number: db.tables.length + 1, seats: 4, zone: "Zal" });
+  // Next free number — starts from 1 in a fresh branch and never collides
+  // after a table in the middle is deleted.
+  const nextNumber = db.tables.length ? Math.max(...db.tables.map((t) => t.number)) + 1 : 1;
+  const [draft, setDraft] = useState({ number: nextNumber, seats: 4, zone: "Zal" });
 
   const sorted = [...db.tables].sort((a, b) => a.number - b.number);
 
@@ -27,7 +30,12 @@ export function TablesAdmin() {
         title="Stollar"
         subtitle={`${db.tables.length} stol · ${db.tables.filter((t) => t.status !== "EMPTY").length} band`}
         action={
-          <Button onClick={() => setAddOpen(true)}>
+          <Button
+            onClick={() => {
+              setDraft({ number: nextNumber, seats: 4, zone: "Zal" });
+              setAddOpen(true);
+            }}
+          >
             <Plus className="h-4 w-4" /> Stol qo‘shish
           </Button>
         }
@@ -177,7 +185,7 @@ export function TablesAdmin() {
               }
               const t = api.addTable({ number: draft.number, seats: draft.seats, zone: draft.zone }, staff);
               toast({ type: "success", title: `Stol №${t.number} qo‘shildi` });
-              setDraft({ number: draft.number + 1, seats: 4, zone: "Zal" });
+              setDraft({ number: nextNumber + 1, seats: 4, zone: "Zal" });
               setAddOpen(false);
             }}
           >

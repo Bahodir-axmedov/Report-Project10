@@ -32,20 +32,174 @@ import type {
   TableSession,
   TableStatus,
   WaiterCall,
+  BranchMeta,
 } from "./types";
 import { canTransition, randomToken, uid } from "./utils";
 import { permissionsForRole } from "./permissions";
 
 const DB_KEY = "yumi.db.v5";
+const BRANCH_KEY = "yumi.branches.v1";
+const TAB_BRANCH_KEY = "yumi.activeBranch.v1";
 const CHANNEL = "yumi.realtime.v5";
 const CURRENT_VERSION = 3;
 
-function load(): DB {
+/** Session storage keys owned by auth/customer — read once at startup to
+ * restore the branch a signed-in device or a guest session belongs to. */
+export const AUTH_KEY = "yumi.auth.v1";
+export const CUSTOMER_KEY = "yumi.customer.v1";
+
+// ---------------------------------------------------------------------------
+// Branches (filiallar)
+//
+// Every branch owns a COMPLETELY separate database (tables + QR codes,
+// orders, menu, settings, reports) so two kitchens never share a record.
+// The branch registry itself is global; the active branch is per-tab
+// (sessionStorage) so an admin tab and a developer tab can work in different
+// branches side by side. Staff accounts are mirrored into every branch, so
+// the same admin / waiter login works in any branch — the branch is chosen
+// at sign-in.
+// ---------------------------------------------------------------------------
+
+interface BranchRegistry {
+  version: 1;
+  activeId: string;
+  branches: BranchMeta[];
+}
+
+function branchKey(id: string): string {
+  // The very first branch keeps the legacy key so existing installs upgrade
+  // without moving a single byte.
+  return id === "main" ? DB_KEY : `${DB_KEY}.${id}`;
+}
+
+function readRegistry(): BranchRegistry {
+  try {
+    const raw = localStorage.getItem(BRANCH_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as BranchRegistry;
+      if (parsed?.version === 1 && Array.isArray(parsed.branches) && parsed.branches.length) {
+        if (!parsed.branches.some((b) => b.id === parsed.activeId)) parsed.activeId = parsed.branches[0].id;
+        return parsed;
+      }
+    }
+  } catch {
+    /* fall through to migration */
+  }
+  // First run on an existing install: the single database becomes branch 1.
+  const registry: BranchRegistry = {
+    version: 1,
+    activeId: "main",
+    branches: [{ id: "main", name: "Markaziy filial", createdAt: Date.now() }],
+  };
+  writeRegistry(registry);
+  return registry;
+}
+
+function writeRegistry(r: BranchRegistry): void {
+  try {
+    localStorage.setItem(BRANCH_KEY, JSON.stringify(r));
+  } catch {
+    /* quota */
+  }
+}
+
+/** Read a branch database WITHOUT touching the active one. */
+function readBranch(id: string): DB | null {
+  try {
+    const raw = localStorage.getItem(branchKey(id));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as DB;
+    return parsed && Array.isArray(parsed.products) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Startup priority: signed-in staff session → guest session → this tab's own
+ * choice → last used on this device → first branch.
+ */
+function initialBranchId(reg: BranchRegistry): string {
+  const known = (id: string | null | undefined): string | null =>
+    id && reg.branches.some((b) => b.id === id) ? id : null;
+  const candidates: (string | null)[] = [];
+  try {
+    const raw = localStorage.getItem(AUTH_KEY);
+    if (raw?.startsWith("{")) candidates.push((JSON.parse(raw) as { branchId?: string }).branchId ?? null);
+  } catch {
+    /* noop */
+  }
+  try {
+    const raw = localStorage.getItem(CUSTOMER_KEY);
+    if (raw) candidates.push((JSON.parse(raw) as { branchId?: string }).branchId ?? null);
+  } catch {
+    /* noop */
+  }
+  try {
+    candidates.push(sessionStorage.getItem(TAB_BRANCH_KEY));
+  } catch {
+    /* noop */
+  }
+  candidates.push(reg.activeId, reg.branches[0].id);
+  for (const c of candidates) {
+    const hit = known(c);
+    if (hit) return hit;
+  }
+  return reg.branches[0].id;
+}
+
+let registry: BranchRegistry = readRegistry();
+let activeId: string = initialBranchId(registry);
+try {
+  sessionStorage.setItem(TAB_BRANCH_KEY, activeId);
+} catch {
+  /* noop */
+}
+
+/** Stable snapshot for React (useSyncExternalStore) — replaced on every
+ * branch change so selectors re-render. */
+let branchState: { list: BranchMeta[]; activeId: string } = {
+  list: registry.branches,
+  activeId,
+};
+function syncBranchState(): void {
+  const sameList =
+    branchState.list.length === registry.branches.length &&
+    branchState.list.every(
+      (b, i) =>
+        b.id === registry.branches[i].id &&
+        b.name === registry.branches[i].name &&
+        b.createdAt === registry.branches[i].createdAt
+    );
+  if (sameList && branchState.activeId === activeId) return; // keep stable ref
+  branchState = { list: registry.branches, activeId };
+}
+
+export function getBranchState(): { list: BranchMeta[]; activeId: string } {
+  return branchState;
+}
+
+/** Re-read the registry (other tabs may have created/renamed/removed a
+ * branch) and make sure this tab still points at an existing branch. */
+function refreshActive(): void {
+  registry = readRegistry();
+  if (!registry.branches.some((b) => b.id === activeId)) {
+    activeId = registry.activeId;
+    try {
+      sessionStorage.setItem(TAB_BRANCH_KEY, activeId);
+    } catch {
+      /* noop */
+    }
+  }
+  syncBranchState();
+}
+
+function load(id: string = activeId): DB {
   // The developer key belongs to the developer, not to the seeded demo data:
   // a version bump / factory reset must never roll it back to the defaults.
   let keepDev: DB["dev"] | null = null;
   try {
-    const raw = localStorage.getItem(DB_KEY);
+    const raw = localStorage.getItem(branchKey(id));
     if (raw) {
       const parsed = JSON.parse(raw) as DB;
       if (parsed?.dev?.password) keepDev = parsed.dev;
@@ -56,8 +210,63 @@ function load(): DB {
   }
   const seeded = buildSeedDB();
   if (keepDev) seeded.dev = keepDev;
-  localStorage.setItem(DB_KEY, JSON.stringify(seeded));
+  try {
+    localStorage.setItem(branchKey(id), JSON.stringify(seeded));
+  } catch {
+    /* quota */
+  }
   return seeded;
+}
+
+/** Generate a QR token for a table. Non-main branches get a branch prefix so
+ * tokens can never collide across kitchens; the table number always starts at 1
+ * within each branch. */
+function qrTokenFor(tableNumber: number, branchId: string = activeId): string {
+  const prefix = branchId === "main" ? "yumi" : `yumi-${branchId}`;
+  return `${prefix}-${tableNumber}-${randomToken(12)}`;
+}
+
+/** Move THIS tab to another branch (per-tab choice + device last-used). */
+function setActiveBranch(id: string): void {
+  refreshActive();
+  if (!registry.branches.some((b) => b.id === id)) return;
+  activeId = id;
+  registry.activeId = id;
+  writeRegistry(registry);
+  try {
+    sessionStorage.setItem(TAB_BRANCH_KEY, id);
+  } catch {
+    /* noop */
+  }
+  // A signed-in staff member picked this branch explicitly — remember it as
+  // the branch their session belongs to, so a reload lands here too.
+  try {
+    const raw = localStorage.getItem(AUTH_KEY);
+    if (raw?.startsWith("{")) {
+      const parsed = JSON.parse(raw) as { staffId?: string; branchId?: string };
+      if (parsed?.staffId) localStorage.setItem(AUTH_KEY, JSON.stringify({ ...parsed, branchId: id }));
+    }
+  } catch {
+    /* noop */
+  }
+  db = load(id);
+  syncBranchState();
+}
+
+/** Staff accounts and the developer key are global: after any change, copy them
+ * into every branch so one login works in all branches. */
+function mirrorStaffToAll(): void {
+  refreshActive();
+  for (const b of registry.branches) {
+    if (b.id === activeId) continue;
+    const other = readBranch(b.id);
+    if (!other) continue;
+    try {
+      localStorage.setItem(branchKey(b.id), JSON.stringify({ ...other, staff: db.staff, dev: db.dev }));
+    } catch {
+      /* quota */
+    }
+  }
 }
 
 let db: DB = load();
@@ -76,7 +285,7 @@ function emit() {
 
 function persist() {
   try {
-    localStorage.setItem(DB_KEY, JSON.stringify(db));
+    localStorage.setItem(branchKey(activeId), JSON.stringify(db));
   } catch {
     /* quota */
   }
@@ -88,12 +297,13 @@ function mutate(fn: (d: DB) => void): void {
   db = { ...db };
   persist();
   emit();
-  channel?.postMessage({ kind: "sync", at: Date.now() });
+  channel?.postMessage({ kind: "sync", at: Date.now(), branchId: activeId });
 }
 
 function emitEvent(e: OrderStatusEvent) {
   eventListeners.forEach((l) => l(e));
-  channel?.postMessage({ kind: "event", event: e });
+  // Tag the event with its branch so another branch's tab never toasts it.
+  channel?.postMessage({ kind: "event", event: e, branchId: activeId });
 }
 
 function pushLog(
@@ -149,16 +359,20 @@ function pushNotification(
 if (channel) {
   channel.onmessage = (ev: MessageEvent) => {
     const data = ev.data as
-      | { kind: "sync" }
-      | { kind: "event"; event: OrderStatusEvent }
+      | { kind: "sync"; branchId?: string }
+      | { kind: "event"; event: OrderStatusEvent; branchId?: string }
       | { kind: "request-sync" };
+    // Another branch's traffic must never wake this tab up.
     if (data?.kind === "sync") {
+      if (data.branchId && data.branchId !== activeId) return;
+      refreshActive();
       db = load();
       emit();
     } else if (data?.kind === "event") {
+      if (data.branchId && data.branchId !== activeId) return;
       eventListeners.forEach((l) => l(data.event));
     } else if (data?.kind === "request-sync") {
-      channel?.postMessage({ kind: "sync", at: Date.now() });
+      channel?.postMessage({ kind: "sync", at: Date.now(), branchId: activeId });
     }
   };
   channel.postMessage({ kind: "request-sync" });
@@ -171,14 +385,15 @@ export function getDB(): DB {
 export function resetDemoData() {
   // Keep the developer credentials across a factory reset (handover safety).
   const keepDev = db.dev;
-  localStorage.removeItem(DB_KEY);
+  refreshActive();
+  localStorage.removeItem(branchKey(activeId));
   db = load();
   if (keepDev?.password) {
     db = { ...db, dev: keepDev };
     persist();
   }
   emit();
-  channel?.postMessage({ kind: "sync", at: Date.now() });
+  channel?.postMessage({ kind: "sync", at: Date.now(), branchId: activeId });
 }
 
 // ---------------------------------------------------------------------------
@@ -199,6 +414,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
   // may have written a newer snapshot).
   useEffect(() => {
     const onFocus = () => {
+      // Registry may have changed in another tab (branch created/removed) —
+      // re-read it first so this tab never points at a deleted branch.
+      refreshActive();
       db = load();
       emit();
     };
@@ -223,6 +441,18 @@ export function useDB(): DB {
   );
 }
 
+/** Branch list + active branch for this tab (re-renders on any change). */
+export function useBranches(): { list: BranchMeta[]; activeId: string } {
+  return useSyncExternalStore(
+    (cb) => {
+      listeners.add(cb);
+      return () => listeners.delete(cb);
+    },
+    getBranchState,
+    getBranchState
+  );
+}
+
 export function useRealtimeEvent(handler: (e: OrderStatusEvent) => void) {
   const ref = useRef(handler);
   ref.current = handler;
@@ -244,23 +474,206 @@ export function subscribeEvents(cb: (e: OrderStatusEvent) => void) {
 // Domain API (all validation happens here — never trust the caller)
 // ---------------------------------------------------------------------------
 export const api = {
+  // ---------- branches (filiallar) ----------
+  /** All branches; the active one for THIS tab. */
+  listBranches(): BranchMeta[] {
+    refreshActive();
+    return registry.branches;
+  },
+
+  activeBranchId(): string {
+    refreshActive();
+    return activeId;
+  },
+
+  activeBranch(): BranchMeta {
+    refreshActive();
+    return registry.branches.find((b) => b.id === activeId) ?? registry.branches[0];
+  },
+
+  /** Lightweight per-branch counters for the developer "Filiallar" tab. */
+  branchStats(id: string): { tables: number; orders: number; products: number; staff: number } {
+    if (id === activeId) {
+      return {
+        tables: db.tables.length,
+        orders: db.orders.length,
+        products: db.products.length,
+        staff: db.staff.length,
+      };
+    }
+    const other = readBranch(id);
+    return other
+      ? {
+          tables: other.tables.length,
+          orders: other.orders.length,
+          products: other.products.length,
+          staff: other.staff.length,
+        }
+      : { tables: 0, orders: 0, products: 0, staff: 0 };
+  },
+
+  /** Move this tab to another branch. Signed-in staff stay signed in because
+   * accounts are mirrored across branches. */
+  switchBranch(id: string): boolean {
+    if (id === activeId) {
+      try {
+        sessionStorage.setItem(TAB_BRANCH_KEY, activeId);
+      } catch {
+        /* noop */
+      }
+      return true;
+    }
+    if (!registry.branches.some((b) => b.id === id)) return false;
+    setActiveBranch(id);
+    emit();
+    channel?.postMessage({ kind: "sync", at: Date.now(), branchId: activeId });
+    return true;
+  },
+
+  /** Create a second (third, …) kitchen. It gets a COMPLETELY separate
+   * database: its own tables + QR codes numbered from 1, menu, orders and
+   * reports. Staff accounts are copied so the same logins work there. */
+  createBranch(name: string): BranchMeta {
+    refreshActive();
+    const meta: BranchMeta = {
+      id: uid("br"),
+      name: name.trim() || `Filial ${registry.branches.length + 1}`,
+      createdAt: Date.now(),
+    };
+    registry = { ...registry, branches: [...registry.branches, meta] };
+    writeRegistry(registry);
+    const seeded = buildSeedDB();
+    // fresh branch: no demo history, table numbering + QR start from 1
+    seeded.orders = [];
+    seeded.payments = [];
+    seeded.calls = [];
+    seeded.sessions = [];
+    seeded.notifications = [];
+    seeded.counters = { orderNumber: 0 };
+    seeded.staff = db.staff; // same logins everywhere
+    seeded.dev = db.dev;
+    seeded.tables = seeded.tables.map((t) => ({
+      ...t,
+      status: "EMPTY" as TableStatus,
+      qrToken: qrTokenFor(t.number, meta.id),
+    }));
+    seeded.logs = [
+      {
+        id: uid("log"),
+        at: Date.now(),
+        staffId: null,
+        staffName: "Developer",
+        role: "SYSTEM",
+        action: `Filial yaratildi: ${meta.name}`,
+        entity: "branch",
+        entityId: meta.id,
+      },
+    ];
+    try {
+      localStorage.setItem(branchKey(meta.id), JSON.stringify(seeded));
+    } catch {
+      /* quota */
+    }
+    syncBranchState();
+    emit();
+    return meta;
+  },
+
+  renameBranch(id: string, name: string): boolean {
+    refreshActive();
+    const clean = name.trim();
+    if (!clean) return false;
+    if (!registry.branches.some((b) => b.id === id)) return false;
+    registry = {
+      ...registry,
+      branches: registry.branches.map((b) => (b.id === id ? { ...b, name: clean } : b)),
+    };
+    writeRegistry(registry);
+    syncBranchState();
+    emit();
+    return true;
+  },
+
+  /** Remove a branch and ALL of its data. The last remaining branch is kept. */
+  deleteBranch(id: string): boolean {
+    refreshActive();
+    if (registry.branches.length <= 1) return false;
+    if (!registry.branches.some((b) => b.id === id)) return false;
+    const branches = registry.branches.filter((b) => b.id !== id);
+    registry = {
+      ...registry,
+      branches,
+      activeId: registry.activeId === id ? branches[0].id : registry.activeId,
+    };
+    writeRegistry(registry);
+    try {
+      localStorage.removeItem(branchKey(id));
+    } catch {
+      /* noop */
+    }
+    if (activeId === id) {
+      activeId = registry.activeId;
+      try {
+        sessionStorage.setItem(TAB_BRANCH_KEY, activeId);
+      } catch {
+        /* noop */
+      }
+      db = load();
+    }
+    syncBranchState();
+    emit();
+    channel?.postMessage({ kind: "sync", at: Date.now(), branchId: activeId });
+    return true;
+  },
+
   // ---------- auth ----------
-  login(username: string, password: string): Staff | null {
-    const s = db.staff.find(
+  // ---------- auth ----------
+  /**
+   * Sign in. `branchId` (picked on the login screen) is validated first and the
+   * tab switches to that branch only after the credentials check out. Staff are
+   * mirrored across branches, so the same login works everywhere.
+   */
+  login(username: string, password: string, branchId?: string): Staff | null {
+    refreshActive();
+    const target = branchId && branchId !== activeId && registry.branches.some((b) => b.id === branchId)
+      ? branchId
+      : null;
+    const source = target ? readBranch(target) : db;
+    if (!source) return null;
+    const s = source.staff.find(
       (x) => x.username.toLowerCase() === username.trim().toLowerCase() && x.password === password
     );
     if (!s || !s.active) return null;
+    if (target) setActiveBranch(target); // db reloaded to the chosen branch
     pushLog(db, s.role, s.name, "Tizimga kirdi", "auth", s.id);
     db = { ...db };
     persist();
     emit();
+    channel?.postMessage({ kind: "sync", at: Date.now(), branchId: activeId });
     return s;
   },
 
   // ---------- tables ----------
+  /**
+   * QR lookup: the token belongs to exactly one branch. If the scanned table
+   * lives in another branch, this tab moves there so the guest session is
+   * created in the right database — branches never share records.
+   */
   resolveTableByToken(token: string): RestaurantTable | null {
-    const t = db.tables.find((x) => x.qrToken === token);
-    return t && t.active ? t : t ?? null;
+    let t = db.tables.find((x) => x.qrToken === token) ?? null;
+    if (!t) {
+      refreshActive();
+      for (const b of registry.branches) {
+        if (b.id === activeId) continue;
+        const other = readBranch(b.id);
+        if (other?.tables.some((x) => x.qrToken === token)) {
+          setActiveBranch(b.id);
+          t = db.tables.find((x) => x.qrToken === token) ?? null;
+          break;
+        }
+      }
+    }
+    return t;
   },
 
   getOrCreateSession(tableId: string, device: string): TableSession {
@@ -358,7 +771,7 @@ export const api = {
     const table: RestaurantTable = {
       id: uid("tbl"),
       number: input.number,
-      qrToken: "yumi-" + input.number + "-" + randomToken(12),
+      qrToken: qrTokenFor(input.number),
       status: "EMPTY",
       active: true,
       seats: input.seats,
@@ -386,7 +799,8 @@ export const api = {
   },
 
   regenerateQr(id: string, staff: Staff) {
-    const token = "yumi-" + randomToken(16);
+    const num = db.tables.find((t) => t.id === id)?.number ?? 1;
+    const token = qrTokenFor(num);
     mutate((d) => {
       d.tables = d.tables.map((t) => (t.id === id ? { ...t, qrToken: token } : t));
       pushLog(d, staff.role, staff.name, "QR token yangilandi", "table", id, undefined, staff.id);
@@ -816,18 +1230,21 @@ export const api = {
       d.staff = exists ? d.staff.map((x) => (x.id === s.id ? s : x)) : [...d.staff, s];
       pushLog(d, actor.role, actor.name, exists ? "Xodim tahrirlandi" : "Xodim qo‘shildi", "staff", s.id, s.name, actor.id);
     });
+    mirrorStaffToAll(); // the same login must work in every branch
   },
   deleteStaff(id: string, actor: Staff) {
     mutate((d) => {
       d.staff = d.staff.filter((x) => x.id !== id);
       pushLog(d, actor.role, actor.name, "Xodim o‘chirildi", "staff", id, undefined, actor.id);
     });
+    mirrorStaffToAll();
   },
   setStaffPermissions(id: string, permissions: PermissionKey[], actor: Staff) {
     mutate((d) => {
       d.staff = d.staff.map((x) => (x.id === id ? { ...x, permissions } : x));
       pushLog(d, actor.role, actor.name, "Ruxsatlar yangilandi", "staff", id, undefined, actor.id);
     });
+    mirrorStaffToAll();
   },
 
   // ---------- promotions ----------
@@ -895,6 +1312,7 @@ export const api = {
     mutate((d) => {
       d.dev = { ...d.dev, ...patch };
     });
+    mirrorStaffToAll(); // developer key works from any branch
   },
 
   /** Raw dump of the whole database (developer export / inspection). */
