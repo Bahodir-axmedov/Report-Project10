@@ -149,6 +149,10 @@ async function call(
       disable("SYNC_TOKEN mos emas");
       return null;
     }
+    if (res.status === 403) {
+      disable("server so‘rovni manbasi uchun rad etdi (Origin)");
+      return null;
+    }
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const contentType = res.headers.get("content-type") ?? "";
     if (!contentType.includes("application/json")) {

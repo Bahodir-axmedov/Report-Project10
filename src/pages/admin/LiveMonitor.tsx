@@ -36,7 +36,7 @@ function viewingLabel(path: string): string {
   if (path.startsWith("/cart")) return "Savatda";
   if (path.startsWith("/checkout")) return "Buyurtma bermoqda";
   if (path.startsWith("/orders") || path.startsWith("/order/")) return "Buyurtmasini kuzatmoqda";
-  if (path.startsWith("/profile")) return "Profil";
+  if (path.startsWith("/track")) return "Buyurtma raqamini qidirmoqda";
   if (path.startsWith("/categories")) return "Menyu bo‘limida";
   return "Menyuni ko‘rmoqda";
 }

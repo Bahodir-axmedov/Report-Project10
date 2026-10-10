@@ -36,6 +36,7 @@ import type {
 } from "./types";
 import { canTransition, randomToken, uid } from "./utils";
 import { permissionsForRole } from "./permissions";
+import { hashPassword, isHashed, verifyPassword } from "./hash";
 
 const DB_KEY = "yumi.db.v5";
 const BRANCH_KEY = "yumi.branches.v1";
@@ -267,6 +268,23 @@ function refreshActive(): void {
 /** Strip URLs of the dead image host (loremflickr.com returns 401 for
  * everyone) so <FoodImage> shows its brand fallback immediately instead of
  * firing failing requests. Returns true when something changed. */
+/** Upgrade legacy plaintext staff/dev passwords to salted hashes in place.
+ * Returns true when something changed so the caller can persist the snapshot. */
+function migratePasswords(d: DB): boolean {
+  let changed = false;
+  for (const s of d.staff) {
+    if (s.password && !isHashed(s.password)) {
+      s.password = hashPassword(s.password);
+      changed = true;
+    }
+  }
+  if (d.dev?.password && !isHashed(d.dev.password)) {
+    d.dev = { ...d.dev, password: hashPassword(d.dev.password) };
+    changed = true;
+  }
+  return changed;
+}
+
 function migrateDeadImages(d: DB): boolean {
   let changed = false;
   for (const p of d.products) {
@@ -294,7 +312,9 @@ function load(id: string = activeId): DB {
       const parsed = JSON.parse(raw) as DB;
       if (parsed?.dev?.password) keepDev = parsed.dev;
       if (parsed && parsed.version === CURRENT_VERSION && Array.isArray(parsed.products)) {
-        if (migrateDeadImages(parsed)) {
+        const imgChanged = migrateDeadImages(parsed);
+        const pwChanged = migratePasswords(parsed);
+        if (imgChanged || pwChanged) {
           try {
             localStorage.setItem(branchKey(id), JSON.stringify(parsed));
           } catch {
@@ -1247,7 +1267,9 @@ export const api = {
     const source = target ? readBranch(target) : db;
     if (!source) return { staff: null, roleMismatch: null };
     const s = source.staff.find(
-      (x) => x.username.toLowerCase() === username.trim().toLowerCase() && x.password === password
+      (x) =>
+        x.username.toLowerCase() === username.trim().toLowerCase() &&
+        verifyPassword(x.password, password)
     );
     if (!s || !s.active) return { staff: null, roleMismatch: null };
     if (requireRole) {
@@ -1850,10 +1872,13 @@ export const api = {
 
   // ---------- staff ----------
   saveStaff(s: Staff, actor: Staff) {
+    // never persist a plaintext password — hashing is idempotent, so edit
+    // forms that re-submit the stored hash leave it untouched
+    const rec: Staff = { ...s, password: hashPassword(s.password) };
     mutate((d) => {
-      const exists = d.staff.some((x) => x.id === s.id);
-      d.staff = exists ? d.staff.map((x) => (x.id === s.id ? s : x)) : [...d.staff, s];
-      pushLog(d, actor.role, actor.name, exists ? "Xodim tahrirlandi" : "Xodim qo‘shildi", "staff", s.id, s.name, actor.id);
+      const exists = d.staff.some((x) => x.id === rec.id);
+      d.staff = exists ? d.staff.map((x) => (x.id === rec.id ? rec : x)) : [...d.staff, rec];
+      pushLog(d, actor.role, actor.name, exists ? "Xodim tahrirlandi" : "Xodim qo‘shildi", "staff", rec.id, rec.name, actor.id);
     });
     mirrorStaffToAll(); // the same login must work in every branch
   },
@@ -1917,7 +1942,7 @@ export const api = {
     const match =
       db.dev &&
       db.dev.username.toLowerCase() === username.trim().toLowerCase() &&
-      db.dev.password === password;
+      verifyPassword(db.dev.password, password);
     if (!match) return null;
     const actor = db.staff.find((s) => s.username === DEV_STAFF_USERNAME) ?? null;
     if (actor) {
@@ -1935,7 +1960,11 @@ export const api = {
 
   setDevCredentials(patch: { username?: string; password?: string }) {
     mutate((d) => {
-      d.dev = { ...d.dev, ...patch };
+      d.dev = {
+        ...d.dev,
+        ...patch,
+        ...(patch.password ? { password: hashPassword(patch.password) } : {}),
+      };
     });
     mirrorStaffToAll(); // developer key works from any branch
   },
@@ -1955,7 +1984,9 @@ export const api = {
       mutate((d) => {
         Object.assign(d, parsed);
         // an imported snapshot must not be able to hijack the developer key
-        d.dev = keepDev?.password ? keepDev : d.dev ?? { username: "dev", password: "yumidev2026" };
+        d.dev = keepDev?.password ? keepDev : d.dev ?? { username: "dev", password: hashPassword("yumidev2026") };
+        // an imported dump may carry legacy plaintext credentials
+        migratePasswords(d);
       });
       return { ok: true };
     } catch (e) {

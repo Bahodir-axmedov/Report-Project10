@@ -114,7 +114,7 @@ export default function OrderTracking() {
           </div>
 
           <div className="mt-5 grid gap-2.5">
-            <Link to="/">
+            <Link to="/home">
               <Button size="lg" className="w-full">
                 Bosh sahifaga qaytish
               </Button>
@@ -256,7 +256,7 @@ export default function OrderTracking() {
         </Link>
       </div>
 
-      <Link to="/" className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
+      <Link to="/home" className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
         {table ? `${t("table")} №${table.number} · ` : ""} {t("back_home")}
       </Link>
     </div>

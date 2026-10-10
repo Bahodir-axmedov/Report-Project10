@@ -98,7 +98,7 @@ export default function AuthPage() {
       </div>
 
       <header className="relative z-10 mx-auto flex w-full max-w-5xl items-center justify-between px-4 py-5">
-        <Link to="/" className="flex items-center gap-2 text-sm text-muted-foreground transition hover:text-foreground">
+        <Link to="/home" className="flex items-center gap-2 text-sm text-muted-foreground transition hover:text-foreground">
           <ArrowLeft className="h-4 w-4" /> Bosh sahifa
         </Link>
         <Brand size="sm" />

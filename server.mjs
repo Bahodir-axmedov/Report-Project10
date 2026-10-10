@@ -14,6 +14,7 @@ import { createServer as createHttpServer } from "node:http";
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { timingSafeEqual } from "node:crypto";
 import { extname, join, normalize, resolve, sep } from "node:path";
 
 const DIST = resolve(process.cwd(), "dist");
@@ -64,6 +65,9 @@ function baseHeaders() {
     "Permissions-Policy": "camera=(), geolocation=(), payment=(), usb=()",
     "Cross-Origin-Opener-Policy": "same-origin",
     "Cross-Origin-Resource-Policy": "same-origin",
+    // Railway terminates TLS in front of the container; HSTS is a no-op on
+    // plain-HTTP local runs and pins the domain to HTTPS in real deployments.
+    "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
   };
 }
 
@@ -120,15 +124,16 @@ const MAX_RECORDS_PER_BRANCH = 200_000;
 // misbehaving client or an attacker brute-forcing the token.
 // ---------------------------------------------------------------------------
 const RATE_WINDOW_MS = 60_000;
-const RATE_MAX = 120; // requests / window / IP for GET
+const RATE_MAX = 120; // API requests / window / IP for GET
 const RATE_MAX_POST = 30; // POST is expensive (merge + persist)
-const rateBuckets = new Map(); // ip -> { windowStart, get, post }
+const RATE_MAX_STATIC = 600; // asset hammering guard (a page loads ~20 files)
+const rateBuckets = new Map(); // ip -> { windowStart, get, post, static }
 
-function rateOk(ip, isPost) {
+function rateOk(ip, mode = "get") {
   const now = Date.now();
   let b = rateBuckets.get(ip);
   if (!b || now - b.windowStart >= RATE_WINDOW_MS) {
-    b = { windowStart: now, get: 0, post: 0 };
+    b = { windowStart: now, get: 0, post: 0, static: 0 };
     rateBuckets.set(ip, b);
     // bound memory: drop stale buckets when too many distinct IPs showed up
     if (rateBuckets.size > 10_000) {
@@ -137,16 +142,72 @@ function rateOk(ip, isPost) {
       }
     }
   }
-  if (isPost) b.post += 1;
-  else b.get += 1;
-  return isPost ? b.post <= RATE_MAX_POST : b.get <= RATE_MAX;
+  if (mode === "post") {
+    b.post += 1;
+    return b.post <= RATE_MAX_POST;
+  }
+  if (mode === "static") {
+    b.static += 1;
+    return b.static <= RATE_MAX_STATIC;
+  }
+  b.get += 1;
+  return b.get <= RATE_MAX;
 }
 
+/** True for loopback / RFC1918 / CGNAT peers — i.e. a local reverse proxy
+ * (Railway's edge, nginx) rather than a direct internet client. */
+function isTrustedProxy(addr) {
+  if (!addr) return false;
+  const a = addr.replace(/^::ffff:/, "");
+  if (a === "::1" || a === "127.0.0.1") return true;
+  const parts = a.split(".");
+  if (parts.length !== 4) return a.startsWith("fc") || a.startsWith("fd") || a.startsWith("fe80");
+  const [x, y] = parts.map(Number);
+  if (x === 10) return true;
+  if (x === 127) return true;
+  if (x === 192 && y === 168) return true;
+  if (x === 172 && y >= 16 && y <= 31) return true;
+  if (x === 100 && y >= 64 && y <= 127) return true; // Railway / Cloudflare CGNAT
+  return false;
+}
+
+/** Per-IP identity for the rate limiter.
+ *
+ * X-Forwarded-For is attacker-controlled on a direct connection — trusting it
+ * unconditionally lets anyone rotate the header and reset their bucket. The
+ * header is therefore only honoured when the TCP peer is a private/loopback
+ * address we control (the platform proxy); otherwise the socket address wins. */
 function clientIp(req) {
-  // The server sits behind Railway's proxy; trust X-Forwarded-For only there.
+  const peer = req.socket.remoteAddress ?? "unknown";
+  if (!isTrustedProxy(peer)) return peer;
   const fwd = req.headers["x-forwarded-for"];
-  if (typeof fwd === "string" && fwd.length && fwd.length < 200) return fwd.split(",")[0].trim();
-  return req.socket.remoteAddress ?? "unknown";
+  if (typeof fwd === "string" && fwd.length && fwd.length < 200) {
+    return fwd.split(",")[0].trim();
+  }
+  return peer;
+}
+
+/** Constant-time secret comparison that tolerates length mismatches. */
+function secretEquals(a, b) {
+  const ba = Buffer.from(String(a ?? ""));
+  const bb = Buffer.from(String(b ?? ""));
+  if (ba.length !== bb.length) return false;
+  if (ba.length === 0) return false;
+  return timingSafeEqual(ba, bb);
+}
+
+/** Cross-site request guard for the write endpoint: browsers always attach an
+ * Origin header to cross-origin POSTs, and same-site proxies pass the host
+ * through. Anything that claims a foreign origin is rejected before parsing. */
+function originAllowed(req) {
+  const origin = req.headers.origin;
+  if (!origin) return true; // curl / server-to-server / same-origin navigations
+  try {
+    const host = req.headers.host ?? "";
+    return new URL(origin).host === host;
+  } catch {
+    return false;
+  }
 }
 
 /** branch → col → id → { rev, srv, val } (val === null is a tombstone) */
@@ -300,10 +361,13 @@ function readBody(req) {
 
 async function handleSync(req, res, method, searchParams) {
   await ensureStoresLoaded();
-  if (!rateOk(clientIp(req), method === "POST")) {
+  if (!rateOk(clientIp(req), method === "POST" ? "post" : "get")) {
     return send(res, 429, "Too Many Requests", { "Retry-After": "60" }, method);
   }
-  if (SYNC_TOKEN && String(req.headers["x-sync-token"] ?? "") !== SYNC_TOKEN) {
+  if (method === "POST" && !originAllowed(req)) {
+    return send(res, 403, "Forbidden origin", {}, method);
+  }
+  if (SYNC_TOKEN && !secretEquals(req.headers["x-sync-token"], SYNC_TOKEN)) {
     return send(res, 401, "Unauthorized", {}, method);
   }
 
@@ -330,6 +394,21 @@ async function handleSync(req, res, method, searchParams) {
   return send(res, 405, "Method Not Allowed", { Allow: "GET, POST" }, method);
 }
 
+/** Dotfiles (.env, .git, .DS_Store …) are never part of the build output.
+ * They must 404 outright — not fall through to the SPA shell — so a probe
+ * cannot even confirm the fallback behaviour. */
+function isDotfilePath(pathname) {
+  let rel;
+  try {
+    rel = decodeURIComponent(pathname);
+  } catch {
+    return true; // undecodable = suspicious
+  }
+  return normalize(rel)
+    .split(/[/\\]/)
+    .some((seg) => seg.startsWith(".") && seg !== "." && seg !== "..");
+}
+
 /** Resolve a URL pathname to a real file inside dist (or null when missing). */
 async function resolveFile(pathname) {
   let rel;
@@ -339,6 +418,8 @@ async function resolveFile(pathname) {
     return null;
   }
   const clean = normalize(rel).replace(/^([/\\])+/, "");
+  // never escape the dist directory (also catches `..` segments)
+  if (clean.split(/[/\\]/).some((seg) => seg === "..")) return null;
   const target = join(DIST, clean);
   // never escape the dist directory
   if (target !== DIST && !target.startsWith(DIST + sep)) return null;
@@ -375,7 +456,13 @@ async function handle(req, res) {
     return send(res, 405, "Method Not Allowed", { Allow: "GET, HEAD" }, method);
   }
 
+  if (!rateOk(clientIp(req), "static")) {
+    return send(res, 429, "Too Many Requests", { "Retry-After": "60" }, method);
+  }
+
   if (pathname === "/healthz") return send(res, 200, "ok", {}, method);
+
+  if (isDotfilePath(pathname)) return send(res, 404, "Not Found", {}, method);
 
   const hit = await resolveFile(pathname);
   const isAssetPath = extname(pathname) !== "";
@@ -408,6 +495,8 @@ async function handle(req, res) {
   }
 }
 
+export { clientIp, isTrustedProxy, originAllowed, secretEquals };
+
 export function createStaticServer() {
   return createHttpServer((req, res) => {
     handle(req, res).catch(() => {
@@ -421,7 +510,16 @@ const isMain = process.argv[1] && import.meta.url === new URL(`file://${process.
 
 if (isMain) {
   const server = createStaticServer();
+  // slowloris mitigation: refuse clients that dribble headers / bodies
+  server.headersTimeout = 15_000;
+  server.requestTimeout = 60_000;
+  server.keepAliveTimeout = 10_000;
   server.listen(PORT, HOST, async () => {
+    if (!SYNC_TOKEN) {
+      console.warn(
+        "[yumi] OGohlANTIRISH: SYNC_TOKEN sozlanmagan — /api/sync ochiq. Ishlab chiqarishda SYNC_TOKEN (server) va VITE_SYNC_TOKEN (build) ni bir xil qiymatga qo‘ying."
+      );
+    }
     let ready = false;
     try {
       await stat(INDEX);

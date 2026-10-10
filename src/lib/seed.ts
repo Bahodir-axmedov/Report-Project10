@@ -8,6 +8,7 @@ import type {
 } from "./types";
 import { permissionsForRole } from "./permissions";
 import { randomToken, uid } from "./utils";
+import { hashPassword } from "./hash";
 
 // The previous keyword-image service (loremflickr.com) now answers 401 for
 // every request, which broke ALL food photos. We intentionally ship without an
@@ -236,6 +237,10 @@ export function buildTables(): RestaurantTable[] {
 
 export const DEFAULT_DEV = { username: "dev", password: "yumidev2026" };
 
+// NOTE: the seeded password is the public demo credential from README.md.
+// Stored values are hashed (see lib/hash.ts) — login still accepts the
+// plaintext demo password because verification hashes the attempt.
+
 /** The developer console signs in as this hidden account (password is random). */
 export const DEV_STAFF_USERNAME = "__developer";
 
@@ -251,7 +256,7 @@ export function buildStaff(): Staff[] {
     name,
     phone,
     username,
-    password,
+    password: hashPassword(password),
     role,
     active: true,
     permissions: permissionsForRole(role),
@@ -316,7 +321,7 @@ export function buildSeedDB(): DB {
     ],
     notifications: [],
     settings: DEFAULT_SETTINGS,
-    dev: { ...DEFAULT_DEV },
+    dev: { username: DEFAULT_DEV.username, password: hashPassword(DEFAULT_DEV.password) },
     counters: { orderNumber: 24 },
   };
   return withSampleData(base);

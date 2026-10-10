@@ -21,7 +21,7 @@ import { cn, fmtTime } from "@/lib/utils";
 
 // No profile/registration anywhere in the guest app: track by order number.
 const NAV: { to: string; label: string; icon: typeof Home; end?: boolean }[] = [
-  { to: "/", label: "home", icon: Home, end: true },
+  { to: "/home", label: "home", icon: Home, end: true },
   { to: "/menu", label: "menu", icon: LayoutGrid },
   { to: "/cart", label: "cart", icon: ShoppingBag },
   { to: "/track", label: "tracking", icon: Route },
@@ -80,7 +80,7 @@ export function CustomerShell() {
     <div className="min-h-full bg-background pb-24 lg:pb-0">
       <header className="sticky top-0 z-40 border-b border-border bg-background/80 backdrop-blur-xl">
         <div className="mx-auto flex h-16 max-w-6xl items-center gap-3 px-4">
-          <Link to="/" className="flex items-center">
+          <Link to="/home" className="flex items-center">
             <Brand size="sm" />
           </Link>
           {table && (
@@ -192,7 +192,7 @@ export function CustomerShell() {
                 <button
                   onClick={() => {
                     leave();
-                    navigate("/");
+                    navigate("/home");
                   }}
                   className="flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-sm font-semibold text-muted-foreground transition hover:bg-white/5 hover:text-foreground"
                 >

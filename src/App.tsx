@@ -5,6 +5,7 @@ import { RequireStaff } from "@/components/staff/RequireStaff";
 import AuthPage from "@/pages/AuthPage";
 
 import { CustomerShell } from "@/components/customer/CustomerShell";
+import Landing from "@/pages/Landing";
 import TableEntry from "@/pages/customer/TableEntry";
 import CustomerHome from "@/pages/customer/Home";
 import Categories from "@/pages/customer/Categories";
@@ -36,9 +37,11 @@ export default function App() {
   return (
     <CustomerProvider>
       <Routes>
+        {/* Marketing landing (mockup) — the guest portal lives at /home. */}
+        <Route path="/" element={<Landing />} />
         {/* Portal home — no registration, no profile: order at table, delivery,
             pre-order, promotions and restaurant info (mockup screen 1). */}
-        <Route path="/" element={<CustomerHome />} />
+        <Route path="/home" element={<CustomerHome />} />
         <Route path="/auth" element={<AuthPage />} />
         <Route path="/t/:token" element={<TableEntry />} />
         <Route path="/table/:token" element={<TableEntry />} />

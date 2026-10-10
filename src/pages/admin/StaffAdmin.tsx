@@ -67,7 +67,7 @@ export default function StaffAdmin() {
               <Badge tone={s.active ? "success" : "danger"}>{s.active ? "Faol" : "Bloklangan"}</Badge>
             </div>
             <div className="mt-3 flex gap-2">
-              <Button size="sm" variant="outline" className="flex-1" onClick={() => setEditing(s)}>
+              <Button size="sm" variant="outline" className="flex-1" onClick={() => setEditing({ ...s, password: "" })}>
                 <Pencil className="h-3.5 w-3.5" /> Tahrirlash
               </Button>
               <Button
@@ -134,11 +134,14 @@ export default function StaffAdmin() {
             className="w-full"
             onClick={() => {
               if (!editing || !me) return;
-              if (!editing.name || !editing.username || !editing.password) {
+              // empty password while editing = keep the stored (hashed) one
+              const existing = db.staff.find((x) => x.id === editing.id);
+              const password = editing.password || existing?.password || "";
+              if (!editing.name || !editing.username || !password) {
                 toast({ type: "error", title: "Ism, login va parolni kiriting" });
                 return;
               }
-              api.saveStaff(editing, me);
+              api.saveStaff({ ...editing, password }, me);
               toast({ type: "success", title: "Saqlandi" });
               setEditing(null);
             }}
@@ -160,7 +163,13 @@ export default function StaffAdmin() {
                 <Input value={editing.username} onChange={(e) => setEditing({ ...editing, username: e.target.value })} autoCapitalize="none" />
               </Field>
               <Field label="Parol">
-                <Input value={editing.password} onChange={(e) => setEditing({ ...editing, password: e.target.value })} />
+                <Input
+                  type="password"
+                  autoComplete="new-password"
+                  value={editing.password}
+                  placeholder={db.staff.some((x) => x.id === editing.id) ? "Bo‘sh qoldirsangiz o‘zgarmaydi" : "Parol"}
+                  onChange={(e) => setEditing({ ...editing, password: e.target.value })}
+                />
               </Field>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">

@@ -4,7 +4,8 @@ Production-style restaurant system with four integrated interfaces on one realti
 
 | Interface | Route | Who uses it |
 |---|---|---|
-| Customer mobile web app | `/t/:token`, `/menu` | Guests scanning a table QR |
+| Marketing landing (design mockup) | `/` | Everyone — hero, stats, menu preview |
+| Customer mobile web app | `/home`, `/t/:token`, `/menu` | Guests scanning a table QR |
 | Admin panel | `/admin` | Administrator (all data, statistics, profit) |
 | Waiter panel | `/waiter` | Waiters |
 | Kitchen / cashier screens | `/kitchen`, `/cashier` | Administrator (used from the admin flow) |
@@ -80,7 +81,7 @@ src/
                   staff/ (header, widgets, guard), QRCodeImage, FoodImage
   pages/          Landing, AuthPage,
                   customer/ (entry, home, categories, product, cart,
-                             checkout, tracking, orders, profile, about),
+                             checkout, tracking, track-by-number, about),
                   staff/ (waiter, kitchen, cashier),
                   admin/ (layout, dashboard, orders board, tables, catalog,
                           staff, promotions, reports, misc)
@@ -117,10 +118,15 @@ directory: `dist`. Deploy `dist/` to any static host / CDN.
 | Waiter | `kamola` | `waiter123` | `/waiter` |
 | Developer (hidden) | `dev` | `yumidev2026` | `/yumidev` |
 
+Passwords are stored **hashed** (`sha256` + app pepper, see `src/lib/hash.ts`) in both the browser
+snapshot and the server sync data — a leaked `data/*.json` never exposes usable credentials. Legacy
+plaintext snapshots are upgraded in place on the next load.
+
 ### How staff sign in
 
 There is **no registration** and **no login entry anywhere in the public site** (the landing page and
-the customer menu have no “Kirish” link). Staff open the panel URL directly:
+the customer menu have no “Kirish” link — only a small “Xodimlar uchun kirish” link in the portal
+footer). Staff open the panel URL directly:
 
 | Panel | URL |
 |---|---|
