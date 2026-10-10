@@ -8,7 +8,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { buildSeedDB, DEV_STAFF_USERNAME } from "./seed";
+import { buildSeedDB, DEFAULT_SETTINGS, DEV_STAFF_USERNAME } from "./seed";
 import type {
   ActivityLog,
   AppNotification,
@@ -47,6 +47,70 @@ const CURRENT_VERSION = 3;
  * restore the branch a signed-in device or a guest session belongs to. */
 export const AUTH_KEY = "yumi.auth.v1";
 export const CUSTOMER_KEY = "yumi.customer.v1";
+
+// ---------------------------------------------------------------------------
+// Cross-device sync (lib/sync.ts drives the network side)
+//
+// The restaurant runs several devices (guest phones, waiter, kitchen, admin),
+// each with its own localStorage. Every local change is therefore diffed per
+// record, stamped with a revision and broadcast to sync subscribers; remote
+// changes are merged back under the same last-write-wins rule, so a device
+// that was offline catches up without losing newer local edits.
+// ---------------------------------------------------------------------------
+
+export interface SyncChange {
+  /** collection name (DB key) */
+  col: string;
+  /** record id ("_" for singleton objects) */
+  id: string;
+  /** client wall-clock of the edit — last write wins across devices */
+  rev: number;
+  /** current value, or null when the record was removed */
+  val: Record<string, unknown> | null;
+}
+export type SyncRecord = SyncChange;
+
+/** Pseudo-branch key that carries the global branch registry document. */
+export const SYNC_REGISTRY_KEY = "__registry__";
+
+export const ARRAY_COLS = [
+  "staff",
+  "tables",
+  "sessions",
+  "categories",
+  "products",
+  "orders",
+  "calls",
+  "payments",
+  "promotions",
+  "logs",
+  "notifications",
+] as const;
+export const SINGLE_COLS = ["settings", "dev", "counters", "features"] as const;
+
+type AnyRecord = { id: string } & Record<string, unknown>;
+
+const localListeners = new Set<(branchId: string, changes: SyncChange[]) => void>();
+/** Registry JSON at the moment of the last notify — detects branch changes. */
+let lastRegistryJson = "";
+
+export function subscribeLocal(cb: (branchId: string, changes: SyncChange[]) => void): () => void {
+  localListeners.add(cb);
+  return () => {
+    localListeners.delete(cb);
+  };
+}
+
+export function notifyLocal(branchId: string, changes: SyncChange[]): void {
+  if (!changes.length) return;
+  for (const l of [...localListeners]) {
+    try {
+      l(branchId, changes);
+    } catch {
+      /* a broken subscriber must never break the write */
+    }
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Branches (filiallar)
@@ -100,6 +164,12 @@ function writeRegistry(r: BranchRegistry): void {
     localStorage.setItem(BRANCH_KEY, JSON.stringify(r));
   } catch {
     /* quota */
+  }
+  // A new/renamed/removed branch must reach the other devices too.
+  const json = JSON.stringify(r.branches);
+  if (json !== lastRegistryJson) {
+    lastRegistryJson = json;
+    notifyLocal(SYNC_REGISTRY_KEY, [{ col: "branches", id: "_", rev: Date.now(), val: r.branches as unknown as Record<string, unknown> }]);
   }
 }
 
@@ -231,6 +301,23 @@ function load(id: string = activeId): DB {
             /* quota */
           }
         }
+        // Fill in settings fields added after this snapshot was written, so an
+        // old browser copy keeps working after an update (deliveryFee, …).
+        let settingsTouched = false;
+        const s = parsed.settings as unknown as Record<string, unknown>;
+        for (const [k, v] of Object.entries(DEFAULT_SETTINGS)) {
+          if (s[k] === undefined) {
+            s[k] = v;
+            settingsTouched = true;
+          }
+        }
+        if (settingsTouched) {
+          try {
+            localStorage.setItem(branchKey(id), JSON.stringify(parsed));
+          } catch {
+            /* quota */
+          }
+        }
         return parsed;
       }
     }
@@ -292,6 +379,14 @@ function mirrorStaffToAll(): void {
     if (!other) continue;
     try {
       localStorage.setItem(branchKey(b.id), JSON.stringify({ ...other, staff: db.staff, dev: db.dev }));
+      const rev = Date.now();
+      notifyLocal(
+        b.id,
+        [
+          ...db.staff.map((s) => ({ col: "staff", id: s.id, rev, val: s as unknown as Record<string, unknown> })),
+          { col: "dev", id: "_", rev, val: db.dev as unknown as Record<string, unknown> },
+        ]
+      );
     } catch {
       /* quota */
     }
@@ -312,21 +407,277 @@ function emit() {
   listeners.forEach((l) => l());
 }
 
-function persist() {
+function persist(): boolean {
   try {
     localStorage.setItem(branchKey(activeId), JSON.stringify(db));
+    return true;
+  } catch {
+    /* quota — caller surfaces it (uploaded images are the usual cause) */
+    return false;
+  }
+}
+
+/** Apply a mutation atomically, persist, notify local + other tabs.
+ * Returns false when the write hit the localStorage quota, so callers can
+ * warn instead of pretending the change was saved. */
+function mutate(fn: (d: DB) => void): boolean {
+  const branchId = activeId;
+  const before = colJson(db);
+  fn(db);
+  db = { ...db };
+  const changes = diffAndStamp(db, before);
+  const ok = persist();
+  emit();
+  channel?.postMessage({ kind: "sync", at: Date.now(), branchId: activeId });
+  notifyLocal(branchId, changes);
+  return ok;
+}
+
+// ----------------------------- sync plumbing ------------------------------
+
+/** JSON fingerprint of every synced collection (cheap enough per mutation:
+ * the whole branch database is only tens of kilobytes). */
+function colJson(d: DB): { arrays: Map<string, Map<string, string>>; singles: Map<string, string | undefined> } {
+  const arrays = new Map<string, Map<string, string>>();
+  const src = d as unknown as Record<string, unknown>;
+  for (const col of ARRAY_COLS) {
+    const m = new Map<string, string>();
+    const arr = src[col];
+    if (Array.isArray(arr)) {
+      for (const r of arr as AnyRecord[]) {
+        if (r && typeof r.id === "string") m.set(r.id, JSON.stringify(r));
+      }
+    }
+    arrays.set(col, m);
+  }
+  const singles = new Map<string, string | undefined>();
+  for (const col of SINGLE_COLS) {
+    const v = src[col];
+    singles.set(col, v === undefined || v === null ? undefined : JSON.stringify(v));
+  }
+  return { arrays, singles };
+}
+
+/** Which records changed (or disappeared) since `before`? Stamp them with a
+ * fresh revision and hand the changes to the sync layer. */
+function diffAndStamp(
+  d: DB,
+  before: { arrays: Map<string, Map<string, string>>; singles: Map<string, string | undefined> }
+): SyncChange[] {
+  const now = Date.now();
+  const revs: Record<string, Record<string, number>> = { ...(d.__revs ?? {}) };
+  const changes: SyncChange[] = [];
+  const src = d as unknown as Record<string, unknown>;
+
+  for (const col of ARRAY_COLS) {
+    const prev = before.arrays.get(col) ?? new Map<string, string>();
+    const arr = (src[col] as AnyRecord[]) ?? [];
+    const seen = new Set<string>();
+    for (const rec of arr) {
+      if (!rec || typeof rec.id !== "string") continue;
+      seen.add(rec.id);
+      if (prev.get(rec.id) === JSON.stringify(rec)) continue; // untouched
+      revs[col] = { ...(revs[col] ?? {}), [rec.id]: now };
+      changes.push({ col, id: rec.id, rev: now, val: rec as Record<string, unknown> });
+    }
+    for (const id of prev.keys()) {
+      if (seen.has(id)) continue;
+      revs[col] = { ...(revs[col] ?? {}), [id]: now };
+      changes.push({ col, id, rev: now, val: null });
+    }
+  }
+
+  for (const col of SINGLE_COLS) {
+    const prev = before.singles.get(col);
+    const v = src[col];
+    const next = v === undefined || v === null ? undefined : JSON.stringify(v);
+    if (prev === next) continue;
+    revs[col] = { ...(revs[col] ?? {}), _: now };
+    changes.push({ col, id: "_", rev: now, val: next === undefined ? null : (v as Record<string, unknown>) });
+  }
+
+  d.__revs = revs;
+  return changes;
+}
+
+/** Full list of this branch's records — used to bootstrap a server that has
+ * never seen this device (deploy day). */
+export function allChangesForSync(branchId: string): SyncChange[] {
+  const d = branchId === activeId ? db : readBranch(branchId);
+  if (!d) return [];
+  const out: SyncChange[] = [];
+  const src = d as unknown as Record<string, unknown>;
+  for (const col of ARRAY_COLS) {
+    const arr = (src[col] as AnyRecord[]) ?? [];
+    for (const rec of arr) {
+      if (!rec || typeof rec.id !== "string") continue;
+      out.push({ col, id: rec.id, rev: d.__revs?.[col]?.[rec.id] ?? 0, val: rec as Record<string, unknown> });
+    }
+  }
+  for (const col of SINGLE_COLS) {
+    const v = src[col];
+    if (v === undefined || v === null) continue;
+    out.push({ col, id: "_", rev: d.__revs?.[col]?.["_"] ?? 0, val: v as Record<string, unknown> });
+  }
+  return out;
+}
+
+/** Has this device edited anything since the feature shipped? (Decides whether
+ * the first sync may treat the server as the source of truth.) */
+export function hasLocalEdits(branchId: string): boolean {
+  const d = branchId === activeId ? db : readBranch(branchId);
+  return !!d && !!d.__revs && Object.keys(d.__revs).length > 0;
+}
+
+const ORDER_EVENT: Record<string, OrderStatusEvent["type"]> = {
+  NEW: "ORDER_CREATED",
+  ACCEPTED: "ORDER_ACCEPTED",
+  PREPARING: "ORDER_PREPARING",
+  READY: "ORDER_READY",
+  WAITING_FOR_WAITER: "WAITER_CALLED",
+  DELIVERED: "ORDER_DELIVERED",
+  COMPLETED: "ORDER_COMPLETED",
+  CANCELLED: "ORDER_CANCELLED",
+};
+
+/** Merge records that arrived from another device. `full` means the server is
+ * the source of truth (first sync of a fresh device): synced collections are
+ * rebuilt from the server instead of unioned with the local demo seed. */
+export function applyRemoteRecords(branchId: string, records: SyncRecord[], full: boolean): void {
+  if (!records.length) return;
+  const events: OrderStatusEvent[] = [];
+
+  const merge = (target: DB): DB => {
+    const next: DB = { ...target };
+    const revs: Record<string, Record<string, number>> = { ...(target.__revs ?? {}) };
+    const src = next as unknown as Record<string, unknown>;
+    const byCol = new Map<string, SyncRecord[]>();
+    for (const r of records) {
+      const list = byCol.get(r.col) ?? [];
+      list.push(r);
+      byCol.set(r.col, list);
+    }
+
+    for (const [col, recs] of byCol) {
+      if ((ARRAY_COLS as readonly string[]).includes(col)) {
+        const existing = ((src[col] as AnyRecord[]) ?? []).filter((r) => r && typeof r.id === "string");
+        const base = full ? [] : existing;
+        const order = base.map((r) => r.id);
+        const map = new Map<string, AnyRecord>(base.map((r) => [r.id, r]));
+        for (const rec of recs) {
+          const localRev = revs[col]?.[rec.id] ?? 0;
+          if (rec.rev < localRev) continue; // local copy is newer — keep it
+          if (rec.val === null) {
+            map.delete(rec.id);
+          } else {
+            const prev = map.get(rec.id);
+            if (col === "orders") {
+              const before = (prev as unknown as { status?: string } | undefined)?.status;
+              const after = (rec.val as { status?: string }).status;
+              if (after && after !== before) {
+                events.push({
+                  type: ORDER_EVENT[after] ?? "DATA_CHANGED",
+                  at: Date.now(),
+                  orderId: rec.id,
+                  orderNumber: (rec.val as { number?: number }).number,
+                  message: "Buyurtma yangilandi",
+                });
+              }
+            }
+            map.set(rec.id, rec.val as AnyRecord);
+          }
+          revs[col] = { ...(revs[col] ?? {}), [rec.id]: rec.rev };
+        }
+        const ordered = order.filter((id) => map.has(id)).map((id) => map.get(id) as AnyRecord);
+        const orderSet = new Set(order);
+        for (const [id, rec] of map) if (!orderSet.has(id)) ordered.push(rec);
+        src[col] = ordered;
+        continue;
+      }
+
+      if ((SINGLE_COLS as readonly string[]).includes(col)) {
+        for (const rec of recs) {
+          const localRev = revs[col]?.["_"] ?? 0;
+          if (rec.rev < localRev) continue;
+          if (col === "counters") {
+            // Monotonic counter: never let a merge reset order numbering.
+            const local = (src[col] as { orderNumber?: number } | undefined)?.orderNumber ?? 0;
+            const remote = (rec.val as { orderNumber?: number } | null)?.orderNumber ?? 0;
+            if (rec.val === null) continue;
+            src[col] = { ...(src[col] as object), orderNumber: Math.max(local, remote) };
+          } else if (rec.val === null) {
+            delete src[col];
+          } else {
+            src[col] = rec.val;
+          }
+          revs[col] = { ...(revs[col] ?? {}), _: rec.rev };
+        }
+      }
+    }
+
+    next.__revs = revs;
+    return next;
+  };
+
+  if (branchId === activeId) {
+    db = merge(db);
+    persist();
+    emit();
+    for (const e of events) emitEvent(e);
+    return;
+  }
+
+  // Another branch: update its storage directly; tabs showing it re-read on
+  // the native `storage` event.
+  try {
+    const other = readBranch(branchId) ?? load(branchId);
+    localStorage.setItem(branchKey(branchId), JSON.stringify(merge(other)));
   } catch {
     /* quota */
   }
 }
 
-/** Apply a mutation atomically, persist, notify local + other tabs. */
-function mutate(fn: (d: DB) => void): void {
-  fn(db);
-  db = { ...db };
-  persist();
-  emit();
-  channel?.postMessage({ kind: "sync", at: Date.now(), branchId: activeId });
+// ------------------------- registry (filiallar) ---------------------------
+
+export function getRegistryForSync(): BranchMeta[] {
+  refreshActive();
+  return registry.branches;
+}
+
+/** Union of local + remote branches: creating a branch is rare and admin-only,
+ * so a merge by id never loses a filial. Writes quietly (no echo push). */
+export function mergeRegistryFromSync(metas: BranchMeta[]): void {
+  if (!Array.isArray(metas) || !metas.length) return;
+  refreshActive();
+  const byId = new Map<string, BranchMeta>();
+  for (const b of registry.branches) byId.set(b.id, b);
+  for (const b of metas) if (b && typeof b.id === "string") byId.set(b.id, b);
+  const merged = [...byId.values()];
+  const changed =
+    merged.length !== registry.branches.length ||
+    merged.some((b, i) => {
+      const cur = registry.branches.find((x) => x.id === b.id);
+      return !cur || cur.name !== b.name || cur.createdAt !== b.createdAt;
+    });
+  if (!changed) return;
+  registry = { ...registry, branches: merged };
+  if (!registry.branches.some((b) => b.id === activeId)) {
+    activeId = registry.activeId = registry.branches[0].id;
+    try {
+      sessionStorage.setItem(TAB_BRANCH_KEY, activeId);
+    } catch {
+      /* noop */
+    }
+    db = load(activeId);
+    emit();
+  }
+  try {
+    localStorage.setItem(BRANCH_KEY, JSON.stringify(registry));
+    lastRegistryJson = JSON.stringify(registry.branches);
+  } catch {
+    /* quota */
+  }
+  syncBranchState();
 }
 
 function emitEvent(e: OrderStatusEvent) {
@@ -417,6 +768,8 @@ export function resetDemoData() {
   // otherwise branches would drift apart after a reset).
   const keepDev = db.dev;
   const keepFeatures = db.features;
+  const keepRevs = db.__revs;
+  const before = colJson(db);
   refreshActive();
   localStorage.removeItem(branchKey(activeId));
   db = load();
@@ -429,9 +782,14 @@ export function resetDemoData() {
     db = { ...db, features: keepFeatures };
     patched = true;
   }
-  if (patched) persist();
+  // Carry the old revisions and diff against the pre-reset snapshot: records
+  // the reset deleted are pushed as tombstones, so other devices drop them too.
+  db.__revs = keepRevs;
+  const changes = diffAndStamp(db, before);
+  persist();
   emit();
   channel?.postMessage({ kind: "sync", at: Date.now(), branchId: activeId });
+  notifyLocal(activeId, changes);
 }
 
 // ---------------------------------------------------------------------------
@@ -860,6 +1218,9 @@ export const api = {
       if (!other) continue;
       try {
         localStorage.setItem(branchKey(b.id), JSON.stringify({ ...other, features: db.features }));
+        if (db.features !== undefined) {
+          notifyLocal(b.id, [{ col: "features", id: "_", rev: Date.now(), val: db.features as Record<string, unknown> }]);
+        }
       } catch {
         /* quota */
       }
@@ -1059,7 +1420,7 @@ export const api = {
 
   // ---------- catalog ----------
   saveProduct(p: Product, staff: Staff) {
-    mutate((d) => {
+    return mutate((d) => {
       const exists = d.products.some((x) => x.id === p.id);
       d.products = exists ? d.products.map((x) => (x.id === p.id ? p : x)) : [...d.products, p];
       pushLog(d, staff.role, staff.name, exists ? "Mahsulot tahrirlandi" : "Mahsulot qo‘shildi", "product", p.id, p.nameUz, staff.id);
@@ -1122,7 +1483,7 @@ export const api = {
     });
   },
   saveCategory(c: Category, staff: Staff) {
-    mutate((d) => {
+    return mutate((d) => {
       const exists = d.categories.some((x) => x.id === c.id);
       d.categories = exists
         ? d.categories.map((x) => (x.id === c.id ? c : x))
@@ -1148,6 +1509,13 @@ export const api = {
     promoCode?: string;
     customerToken?: string | null;
     staff?: Staff | null;
+    /** Delivery / pre-order details (no registration — order-scoped). */
+    customerName?: string;
+    customerPhone?: string;
+    address?: string;
+    scheduledFor?: number;
+    deliveryFee?: number;
+    paymentMethod?: PaymentMethod;
   }): Order | null {
     if (!input.items.length) return null;
     // A guest order must belong to a live table session — a closed session can
@@ -1196,7 +1564,8 @@ export const api = {
         }
       }
       const discount = Math.round((subtotal * discountPct) / 100);
-      const total = subtotal - discount;
+      const deliveryFee = input.type === "DELIVERY" ? Math.max(0, Math.floor(input.deliveryFee ?? 0)) : 0;
+      const total = subtotal - discount + deliveryFee;
       const number = d.counters.orderNumber + 1;
       const order: Order = {
         id: uid("ord"),
@@ -1213,6 +1582,12 @@ export const api = {
         total,
         promoCode: code || undefined,
         paid: false,
+        paymentMethod: input.paymentMethod,
+        customerName: input.customerName?.trim() || undefined,
+        customerPhone: input.customerPhone?.trim() || undefined,
+        address: input.address?.trim() || undefined,
+        scheduledFor: input.scheduledFor,
+        deliveryFee: deliveryFee || undefined,
         createdByStaffId: input.staff?.id ?? null,
         customerToken: input.customerToken ?? null,
         createdAt: Date.now(),
@@ -1253,6 +1628,7 @@ export const api = {
       const now = Date.now();
       const patch: Partial<Order> = { status: next, updatedAt: now };
       if (next === "ACCEPTED") patch.acceptedAt = now;
+      if (next === "PREPARING") patch.preparingAt = now;
       if (next === "READY") patch.readyAt = now;
       if (next === "DELIVERED") {
         patch.deliveredAt = now;

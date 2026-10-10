@@ -6,9 +6,8 @@ import {
   Home,
   Info,
   LayoutGrid,
-  ReceiptText,
+  Route,
   ShoppingBag,
-  User,
   X,
 } from "lucide-react";
 import { Brand } from "@/components/Brand";
@@ -20,12 +19,12 @@ import { useI18n } from "@/lib/i18n";
 import { api, useDB } from "@/lib/store";
 import { cn, fmtTime } from "@/lib/utils";
 
-const NAV = [
-  { to: "/menu", label: "home", icon: Home },
-  { to: "/categories", label: "menu", icon: LayoutGrid },
+// No profile/registration anywhere in the guest app: track by order number.
+const NAV: { to: string; label: string; icon: typeof Home; end?: boolean }[] = [
+  { to: "/", label: "home", icon: Home, end: true },
+  { to: "/menu", label: "menu", icon: LayoutGrid },
   { to: "/cart", label: "cart", icon: ShoppingBag },
-  { to: "/orders", label: "my_orders", icon: ReceiptText },
-  { to: "/profile", label: "profile", icon: User },
+  { to: "/track", label: "tracking", icon: Route },
 ];
 
 export function CustomerShell() {
@@ -81,7 +80,7 @@ export function CustomerShell() {
     <div className="min-h-full bg-background pb-24 lg:pb-0">
       <header className="sticky top-0 z-40 border-b border-border bg-background/80 backdrop-blur-xl">
         <div className="mx-auto flex h-16 max-w-6xl items-center gap-3 px-4">
-          <Link to="/menu" className="flex items-center">
+          <Link to="/" className="flex items-center">
             <Brand size="sm" />
           </Link>
           {table && (
@@ -161,6 +160,7 @@ export function CustomerShell() {
               <NavLink
                 key={item.to}
                 to={item.to}
+                end={item.end}
                 className={({ isActive }) =>
                   cn(
                     "flex items-center gap-3 rounded-2xl px-4 py-3 text-sm font-semibold transition",
@@ -218,6 +218,7 @@ export function CustomerShell() {
             <NavLink
               key={item.to}
               to={item.to}
+              end={item.end}
               className={({ isActive }) =>
                 cn(
                   "relative mx-0.5 flex flex-1 flex-col items-center gap-1 rounded-2xl py-2 text-[10px] font-semibold transition",

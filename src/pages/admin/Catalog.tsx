@@ -3,6 +3,7 @@ import { ArrowDown, ArrowUp, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { Button, Card, Field, Input, Modal, Select, Switch, Textarea } from "@/components/ui/primitives";
 import { StaffPageTitle } from "@/components/staff/StaffHeader";
 import { FoodImage } from "@/components/FoodImage";
+import { ImagePicker } from "@/components/ImagePicker";
 import { useAuth } from "@/lib/auth";
 import { api, useDB } from "@/lib/store";
 import { useToast } from "@/components/ui/toast";
@@ -215,7 +216,15 @@ export function ProductsAdmin() {
                 toast({ type: "error", title: "Nom va narxni kiriting" });
                 return;
               }
-              api.saveProduct(editing, staff);
+              const ok = api.saveProduct(editing, staff);
+              if (!ok) {
+                toast({
+                  type: "error",
+                  title: "Saqlanmadi — xotira to‘ldi",
+                  body: "Rasm hajmini kamaytiring yoki keraksiz rasmlarni o‘chiring.",
+                });
+                return;
+              }
               toast({ type: "success", title: "Saqlandi" });
               setEditing(null);
             }}
@@ -271,9 +280,11 @@ export function ProductsAdmin() {
                 {editing.price > 0 && ` · ${Math.round((1 - editing.cost / editing.price) * 100)}% marja`}
               </div>
             </div>
-            <Field label="Rasm URL">
-              <Input value={editing.image} onChange={(e) => setEditing({ ...editing, image: e.target.value })} placeholder="https://..." />
-            </Field>
+            <ImagePicker
+              label="Rasm"
+              value={editing.image}
+              onChange={(v) => setEditing({ ...editing, image: v })}
+            />
             <Field label="Tavsif (UZ)">
               <Textarea value={editing.descriptionUz} onChange={(e) => setEditing({ ...editing, descriptionUz: e.target.value })} />
             </Field>
@@ -418,7 +429,15 @@ export function CategoriesAdmin() {
                 return;
               }
               const slug = editing.slug || editing.nameUz.toLowerCase().replace(/\s+/g, "-");
-              api.saveCategory({ ...editing, slug }, staff);
+              const ok = api.saveCategory({ ...editing, slug }, staff);
+              if (!ok) {
+                toast({
+                  type: "error",
+                  title: "Saqlanmadi — xotira to‘ldi",
+                  body: "Rasm hajmini kamaytiring yoki keraksiz rasmlarni o‘chiring.",
+                });
+                return;
+              }
               toast({ type: "success", title: "Saqlandi" });
               setEditing(null);
             }}
@@ -448,9 +467,12 @@ export function CategoriesAdmin() {
                 <Input value={editing.slug} onChange={(e) => setEditing({ ...editing, slug: e.target.value })} placeholder="rolls" />
               </Field>
             </div>
-            <Field label="Rasm URL">
-              <Input value={editing.image} onChange={(e) => setEditing({ ...editing, image: e.target.value })} />
-            </Field>
+            <ImagePicker
+              label="Rasm"
+              emoji={editing.icon}
+              value={editing.image}
+              onChange={(v) => setEditing({ ...editing, image: v })}
+            />
             <label className="flex items-center justify-between rounded-xl border border-border bg-secondary/40 px-3 py-2.5 text-sm">
               Ko‘rinadi
               <Switch checked={editing.visible} onChange={(v) => setEditing({ ...editing, visible: v })} label="Ko‘rinadi" />

@@ -11,7 +11,7 @@ import { useFavorites, toggleFavorite } from "@/lib/favorites";
 import { useI18n } from "@/lib/i18n";
 import { useDB, useFeature } from "@/lib/store";
 import { useToast } from "@/components/ui/toast";
-import { CartBar } from "./Home";
+import { CartBar } from "@/components/customer/CartBar";
 import type { Product } from "@/lib/types";
 
 type Filter = "all" | "popular" | "new" | "promo";

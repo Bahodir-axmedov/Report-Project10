@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Banknote, CreditCard, Landmark, Receipt, Wallet } from "lucide-react";
+import { Banknote, CreditCard, Landmark, Receipt, Smartphone, Wallet } from "lucide-react";
 import { Button, Card, EmptyState, Tabs } from "@/components/ui/primitives";
 import { StaffHeader, StaffPageTitle } from "@/components/staff/StaffHeader";
 import { PaymentModal } from "@/components/staff/widgets";
@@ -15,6 +15,8 @@ const METHOD_LABEL: Record<PaymentMethod, { label: string; icon: typeof Banknote
   CARD: { label: "Karta", icon: CreditCard },
   TERMINAL: { label: "Terminal", icon: Landmark },
   OTHER: { label: "Boshqa", icon: Wallet },
+  CLICK: { label: "Click", icon: Smartphone },
+  PAYME: { label: "Payme", icon: Wallet },
 };
 
 export default function CashierPanel() {

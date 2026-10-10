@@ -40,3 +40,6 @@ Thumbs.db
 *.user
 *.swp
 *~
+
+# server sync data (per-branch snapshots — user data, never commit)
+data/

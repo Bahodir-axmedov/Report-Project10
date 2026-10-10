@@ -83,6 +83,8 @@ const METHOD_LABEL: Record<PaymentMethod, string> = {
   CARD: "Karta",
   TERMINAL: "Terminal",
   OTHER: "Boshqa",
+  CLICK: "Click",
+  PAYME: "Payme",
 };
 
 export function PaymentsPage() {
@@ -262,6 +264,13 @@ export function SettingsPage() {
               </Field>
             </div>
           ))}
+          <Field label="Yetkazib berish narxi (so‘m)">
+            <Input
+              type="number"
+              value={form.deliveryFee}
+              onChange={(e) => setForm({ ...form, deliveryFee: Math.max(0, Number(e.target.value)) })}
+            />
+          </Field>
           <Field label="Xizmat haqi (%)">
             <Input
               type="number"

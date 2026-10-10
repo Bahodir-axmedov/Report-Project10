@@ -55,7 +55,7 @@ export type OrderType = "DINE_IN" | "PREORDER" | "DELIVERY";
 export type CallType = "WAITER" | "BILL" | "KITCHEN";
 export type CallStatus = "PENDING" | "ACCEPTED" | "COMPLETED" | "CANCELLED";
 
-export type PaymentMethod = "CASH" | "CARD" | "TERMINAL" | "OTHER";
+export type PaymentMethod = "CASH" | "CARD" | "TERMINAL" | "OTHER" | "CLICK" | "PAYME";
 
 export interface Staff {
   id: string;
@@ -169,11 +169,20 @@ export interface Order {
   promoCode?: string;
   paid: boolean;
   paymentMethod?: PaymentMethod;
+  /** Delivery / pre-order guest details (no registration — order-scoped only). */
+  customerName?: string;
+  customerPhone?: string;
+  address?: string;
+  /** Scheduled time (pre-order or scheduled delivery), epoch ms. */
+  scheduledFor?: number;
+  /** Flat delivery fee folded into `total`. */
+  deliveryFee?: number;
   createdByStaffId: string | null;
   customerToken: string | null;
   createdAt: number;
   updatedAt: number;
   acceptedAt?: number;
+  preparingAt?: number;
   readyAt?: number;
   deliveredAt?: number;
   completedAt?: number;
@@ -251,6 +260,8 @@ export interface RestaurantSettings {
   mapsUrl: string;
   workingHours: string;
   deliveryInfo: string;
+  /** Flat delivery fee in the restaurant currency (so‘m). */
+  deliveryFee: number;
   footerText: string;
   currency: string;
   taxPercent: number;
@@ -289,6 +300,10 @@ export interface DB {
    * EVERYONE except the developer console (customer menu, admin nav, waiter
    * UI). Absent key = enabled. Mirrored across branches — site-wide. */
   features?: Record<string, boolean>;
+  /** Per-record sync revisions (cross-device last-write-wins). Keyed by
+   * collection name → record id → client wall-clock of the last local edit.
+   * Maintained by lib/store + lib/sync; never shown in the UI. */
+  __revs?: Record<string, Record<string, number>>;
 }
 
 export interface OrderStatusEvent {

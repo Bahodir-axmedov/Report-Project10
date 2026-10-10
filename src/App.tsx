@@ -1,11 +1,7 @@
-import { Navigate, Route, Routes, useLocation } from "react-router-dom";
-import { CustomerProvider, useCustomer } from "@/lib/customer";
-import { Button, EmptyState } from "@/components/ui/primitives";
-import { QrCode } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Navigate, Route, Routes } from "react-router-dom";
+import { CustomerProvider } from "@/lib/customer";
 import { RequireStaff } from "@/components/staff/RequireStaff";
 
-import Landing from "@/pages/Landing";
 import AuthPage from "@/pages/AuthPage";
 
 import { CustomerShell } from "@/components/customer/CustomerShell";
@@ -17,8 +13,7 @@ import ProductPage from "@/pages/customer/ProductPage";
 import Cart from "@/pages/customer/Cart";
 import Checkout from "@/pages/customer/Checkout";
 import OrderTracking from "@/pages/customer/OrderTracking";
-import MyOrders from "@/pages/customer/MyOrders";
-import Profile from "@/pages/customer/Profile";
+import TrackOrder from "@/pages/customer/TrackOrder";
 import About from "@/pages/customer/About";
 
 import WaiterPanel from "@/pages/staff/WaiterPanel";
@@ -37,53 +32,30 @@ import LiveMonitor from "@/pages/admin/LiveMonitor";
 import DeveloperConsole from "@/pages/DeveloperConsole";
 import { CallsPage, PaymentsPage, CustomersPage, SettingsPage, LogsPage } from "@/pages/admin/Misc";
 
-function RequireTable({ children }: { children: React.ReactNode }) {
-  const { table } = useCustomer();
-  const location = useLocation();
-  if (!table) {
-    return (
-      <EmptyState
-        icon={<QrCode className="h-8 w-8" />}
-        title="Stol aniqlanmagan"
-        description="Buyurtma berish uchun stol QR kodini skanerlang yoki stol raqamini tanlang."
-        action={
-          <Link to={`/t/demo?returnTo=${encodeURIComponent(location.pathname)}`}>
-            <Button size="lg">Stolni tanlash</Button>
-          </Link>
-        }
-      />
-    );
-  }
-  return <>{children}</>;
-}
-
 export default function App() {
   return (
     <CustomerProvider>
       <Routes>
-        <Route path="/" element={<Landing />} />
+        {/* Portal home — no registration, no profile: order at table, delivery,
+            pre-order, promotions and restaurant info (mockup screen 1). */}
+        <Route path="/" element={<CustomerHome />} />
         <Route path="/auth" element={<AuthPage />} />
         <Route path="/t/:token" element={<TableEntry />} />
         <Route path="/table/:token" element={<TableEntry />} />
+        <Route path="/t" element={<TableEntry />} />
 
-        {/* Customer app */}
-        <Route
-          element={
-            <RequireTable>
-              <CustomerShell />
-            </RequireTable>
-          }
-        >
-          <Route path="/menu" element={<CustomerHome />} />
-          <Route path="/categories" element={<Categories />} />
+        {/* Customer app — works with OR without a table session (delivery and
+            pre-orders never need one; dine-in picks a table at checkout). */}
+        <Route element={<CustomerShell />}>
+          <Route path="/menu" element={<Categories />} />
           <Route path="/menu/c/:slug" element={<CategoryPage />} />
           <Route path="/menu/p/:id" element={<ProductPage />} />
           <Route path="/cart" element={<Cart />} />
           <Route path="/checkout" element={<Checkout />} />
           <Route path="/order/:id" element={<OrderTracking />} />
-          <Route path="/orders" element={<MyOrders />} />
-          <Route path="/profile" element={<Profile />} />
+          <Route path="/track" element={<TrackOrder />} />
           <Route path="/about" element={<About />} />
+          <Route path="/categories" element={<Navigate to="/menu" replace />} />
         </Route>
 
         {/* Developer console — only reachable by opening /yumidev directly */}
@@ -143,21 +115,7 @@ export default function App() {
           <Route path="logs" element={<LogsPage />} />
         </Route>
 
-        <Route
-          path="*"
-          element={
-            <EmptyState
-              icon={<QrCode className="h-8 w-8" />}
-              title="Sahifa topilmadi"
-              description="So‘ralgan sahifa mavjud emas."
-              action={
-                <Link to="/">
-                  <Button size="lg">Bosh sahifa</Button>
-                </Link>
-              }
-            />
-          }
-        />
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </CustomerProvider>
   );

@@ -1,10 +1,23 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { ArrowRight, Bell, Clock, Flame, Heart, Percent, ShoppingBag, Sparkles, Truck, Utensils } from "lucide-react";
+import {
+  ArrowRight,
+  Clock,
+  Percent,
+  Info,
+  Instagram,
+  MapPin,
+  Phone,
+  Send,
+  Sparkles,
+  Truck,
+  Utensils,
+} from "lucide-react";
+import { Brand, LogoMark } from "@/components/Brand";
 import { FoodImage } from "@/components/FoodImage";
+import { LanguageSwitcher } from "@/components/customer/LanguageSwitcher";
 import { ProductCard } from "@/components/customer/ProductCard";
-import { CategoryRail, SearchField, SectionHeader } from "@/components/customer/menu";
 import { Button } from "@/components/ui/primitives";
 import { addToCart, setCartQty, useCart } from "@/lib/cart";
 import { useCustomer } from "@/lib/customer";
@@ -15,239 +28,201 @@ import { useToast } from "@/components/ui/toast";
 import { cn, fmtNumber } from "@/lib/utils";
 import type { Product } from "@/lib/types";
 
+const PENDING_TYPE_KEY = "yumi.pendingType";
+
+/** Remember which order type the guest picked on the home screen so the
+ * checkout wizard opens on the right step. */
+export function setPendingType(type: string) {
+  try {
+    sessionStorage.setItem(PENDING_TYPE_KEY, type);
+  } catch {
+    /* noop */
+  }
+}
+
+export function takePendingType(): string | null {
+  try {
+    const v = sessionStorage.getItem(PENDING_TYPE_KEY);
+    sessionStorage.removeItem(PENDING_TYPE_KEY);
+    return v;
+  } catch {
+    return null;
+  }
+}
+
 export default function CustomerHome() {
   const db = useDB();
   const { sessionKey, table } = useCustomer();
   const { t, categoryName, localizedName } = useI18n();
   const favorites = useFavorites();
-  const showPreorder = useFeature("preorder");
-  const showDelivery = useFeature("delivery");
   const showPromotions = useFeature("promotions");
-  const showFavorites = useFeature("favorites");
+  const showDelivery = useFeature("delivery");
+  const showPreorder = useFeature("preorder");
   const { toast } = useToast();
   const navigate = useNavigate();
-  const [query, setQuery] = useState("");
 
-  const categories = db.categories
-    .filter((c) => c.visible && (showPromotions || c.slug !== "promo"))
-    .sort((a, b) => a.sortOrder - b.sortOrder);
   const products = db.products.filter((p) => p.available);
-  const popular = products.filter((p) => p.isPopular).slice(0, 6);
-  const fresh = products.filter((p) => p.isNew).slice(0, 6);
-  const promo = products.filter((p) => p.isPromotion && p.oldPrice && p.oldPrice > p.price).slice(0, 6);
-  const favouriteProducts = products.filter((p) => favorites.includes(p.id)).slice(0, 6);
+  const popular = useMemo(() => products.filter((p) => p.isPopular).slice(0, 8), [products]);
+  const hero = products.find((p) => p.isPromotion && p.oldPrice) ?? products.find((p) => p.isPopular) ?? products[0];
+  const s = db.settings;
 
-  const hero = promo[0] ?? products.find((p) => p.isPopular) ?? products[0];
-
-  const cartQty = useCart(sessionKey);
-  const qtyOf = (id: string) => cartQty.find((l) => l.productId === id)?.qty ?? 0;
-
-  const results = useMemo(() => {
-    if (!query.trim()) return [];
-    const q = query.toLowerCase();
-    return products
-      .filter(
-        (p) =>
-          localizedName(p).toLowerCase().includes(q) ||
-          p.nameRu.toLowerCase().includes(q) ||
-          p.ingredients.toLowerCase().includes(q)
-      )
-      .slice(0, 8);
-  }, [query, products, localizedName]);
-
-  const categoryOf = (p: Product) => db.categories.find((c) => c.id === p.categoryId);
-
-  const add = (p: Product, qty = 1) => {
-    addToCart(sessionKey, p.id, qty);
+  const lines = useCart(sessionKey);
+  const qtyOf = (id: string) => lines.find((l) => l.productId === id)?.qty ?? 0;
+  const add = (p: Product) => {
+    addToCart(sessionKey, p.id, 1);
     toast({ type: "success", title: t("added"), body: localizedName(p) });
   };
 
+  const startTableOrder = () => {
+    if (table) {
+      navigate("/menu");
+    } else {
+      navigate("/t/demo?returnTo=/menu");
+    }
+  };
+  const startTyped = (type: "DELIVERY" | "PREORDER") => {
+    setPendingType(type);
+    navigate("/menu");
+  };
+
   return (
-    <div className="space-y-7">
-      {/* ---------------- intro ---------------- */}
-      <header className="space-y-1.5">
-        <div className="flex items-center justify-between gap-3">
-          <h1 className="font-display text-[26px] font-extrabold leading-none tracking-tight">{t("menu")}</h1>
-          {table && (
-            <span className="rounded-full border border-primary/40 bg-primary/12 px-3 py-1 text-[11px] font-bold text-primary">
-              {t("table")} №{table.number}
-            </span>
+    <div className="min-h-full bg-background pb-10">
+      {/* ---------------- hero (mockup screen 1) ---------------- */}
+      <section className="relative overflow-hidden">
+        <div className="absolute inset-0">
+          {hero ? (
+            <FoodImage src={hero.image} alt={localizedName(hero)} className="h-full w-full" loading="eager" />
+          ) : (
+            <div className="h-full w-full bg-[radial-gradient(circle_at_50%_20%,hsl(356,82%,24%),hsl(240,6%,6%))]" />
           )}
+          <div className="absolute inset-0 bg-gradient-to-b from-black/70 via-black/60 to-background" />
         </div>
-        <p className="text-[13px] text-muted-foreground">{t("menu_subtitle")}</p>
-      </header>
 
-      {/* ---------------- search ---------------- */}
-      <div className="relative">
-        <SearchField value={query} onChange={setQuery} />
-        {results.length > 0 && (
-          <div className="glass absolute inset-x-0 top-[3.25rem] z-30 overflow-hidden rounded-2xl border border-border shadow-2xl">
-            {results.map((p) => (
-              <button
-                key={p.id}
-                onClick={() => {
-                  setQuery("");
-                  navigate(`/menu/p/${p.id}`);
-                }}
-                className="flex w-full items-center gap-3 border-b border-border/40 p-2.5 text-left transition last:border-0 hover:bg-white/5"
-              >
-                <FoodImage src={p.image} alt={localizedName(p)} className="h-12 w-12 rounded-xl" />
-                <div className="min-w-0 flex-1">
-                  <p className="line-clamp-1 text-sm font-semibold">{localizedName(p)}</p>
-                  {categoryOf(p) && (
-                    <p className="text-xs text-muted-foreground">{categoryName(categoryOf(p)!)}</p>
-                  )}
-                </div>
-                <span className="shrink-0 text-sm font-bold text-primary">{fmtNumber(p.price)}</span>
-              </button>
-            ))}
-          </div>
-        )}
-        {query.trim() && results.length === 0 && (
-          <p className="mt-2 px-1 text-xs text-muted-foreground">{t("no_results")}</p>
-        )}
-      </div>
-
-      {/* ---------------- categories ---------------- */}
-      <section>
-        <SectionHeader title={t("categories")} action={{ label: t("full_menu"), to: "/categories" }} />
-        <CategoryRail categories={categories} />
-      </section>
-
-      {/* ---------------- hero ---------------- */}
-      {hero && (
-        <motion.section
-          initial={{ opacity: 0, y: 14 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="relative overflow-hidden rounded-3xl border border-primary/25"
-        >
-          <FoodImage src={hero.image} alt={localizedName(hero)} className="aspect-[16/10] w-full sm:aspect-[16/7]" loading="eager" />
-          <div className="absolute inset-0 bg-gradient-to-tr from-background via-background/85 to-background/10" />
-          <div className="absolute inset-y-0 left-0 flex max-w-[78%] flex-col justify-center gap-2.5 p-5 sm:max-w-[60%]">
-            <span className="flex w-fit items-center gap-1.5 rounded-full bg-primary px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wide text-primary-foreground">
-              <Percent className="h-3 w-3" />
-              {t("seasonal")}
+        <div className="relative mx-auto flex min-h-[78vh] w-full max-w-md flex-col px-4 pb-8 pt-5">
+          <div className="flex items-center justify-between">
+            <span className="flex items-center gap-2 rounded-full border border-white/15 bg-black/40 px-3 py-1.5 backdrop-blur">
+              <LogoMark className="h-5 w-5" />
+              <span className="text-xs font-extrabold tracking-tight">YÜMI</span>
             </span>
-            <h2 className="font-display text-xl font-extrabold leading-tight tracking-tight sm:text-2xl">
-              {localizedName(hero)}
-            </h2>
-            <div className="flex items-baseline gap-2">
-              <span className="font-display text-2xl font-extrabold text-primary">{fmtNumber(hero.price)}</span>
-              <span className="text-xs font-semibold text-muted-foreground">so‘m</span>
-              {hero.oldPrice && hero.oldPrice > hero.price && (
-                <span className="text-xs text-muted-foreground line-through">{fmtNumber(hero.oldPrice)}</span>
-              )}
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <Button size="sm" onClick={() => navigate(`/menu/p/${hero.id}`)}>
-                {t("order_now")} <ArrowRight className="h-3.5 w-3.5" />
-              </Button>
-              <Button size="sm" variant="secondary" onClick={() => navigate("/categories")}>
-                {t("open_menu")}
-              </Button>
+            <LanguageSwitcher compact />
+          </div>
+
+          <div className="flex flex-1 flex-col items-center justify-center py-10 text-center">
+            <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }}>
+              <Brand size="lg" className="justify-center" />
+            </motion.div>
+            <motion.p
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.1 }}
+              className="mt-5 font-display text-xl font-extrabold text-white drop-shadow"
+            >
+              Mazali taomlar, yaxshi kayfiyat!
+            </motion.p>
+          </div>
+
+          <div className="space-y-2.5">
+            <motion.button
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.15 }}
+              onClick={startTableOrder}
+              className="glow-red flex w-full items-center gap-3.5 rounded-2xl bg-primary p-4 text-left text-primary-foreground transition active:scale-[0.98]"
+            >
+              <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-black/20">
+                <Utensils className="h-5 w-5" />
+              </span>
+              <span className="flex-1">
+                <span className="block text-[15px] font-extrabold">Stolda zakaz berish</span>
+                <span className="mt-0.5 block text-xs opacity-85">
+                  {table ? `Stol №${table.number} · davom eting` : "Stol raqamini kiriting"}
+                </span>
+              </span>
+              <ArrowRight className="h-5 w-5" />
+            </motion.button>
+
+            {showDelivery && (
+              <motion.button
+                initial={{ opacity: 0, y: 16 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.22 }}
+                onClick={() => startTyped("DELIVERY")}
+                className="flex w-full items-center gap-3.5 rounded-2xl border border-white/12 bg-black/55 p-4 text-left backdrop-blur transition hover:border-primary/50 active:scale-[0.98]"
+              >
+                <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-white/8">
+                  <Truck className="h-5 w-5 text-primary" />
+                </span>
+                <span className="flex-1">
+                  <span className="block text-[15px] font-extrabold">Yetkazib berish (Delivery)</span>
+                  <span className="mt-0.5 block text-xs text-white/60">Manzilingizga yetkazamiz</span>
+                </span>
+                <ArrowRight className="h-4 w-4 text-white/50" />
+              </motion.button>
+            )}
+
+            {showPreorder && (
+              <motion.button
+                initial={{ opacity: 0, y: 16 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.28 }}
+                onClick={() => startTyped("PREORDER")}
+                className="flex w-full items-center gap-3.5 rounded-2xl border border-white/12 bg-black/55 p-4 text-left backdrop-blur transition hover:border-primary/50 active:scale-[0.98]"
+              >
+                <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-white/8">
+                  <Clock className="h-5 w-5 text-primary" />
+                </span>
+                <span className="flex-1">
+                  <span className="block text-[15px] font-extrabold">Oldindan zakaz</span>
+                  <span className="mt-0.5 block text-xs text-white/60">Ma’lum vaqtda tayyorlab beramiz</span>
+                </span>
+                <ArrowRight className="h-4 w-4 text-white/50" />
+              </motion.button>
+            )}
+
+            <div className="grid grid-cols-2 gap-2.5 pt-1.5">
+              <Link
+                to={showPromotions ? "/menu/c/promo" : "/menu"}
+                className="flex items-center gap-2.5 rounded-2xl border border-white/12 bg-black/45 px-3.5 py-3 text-left backdrop-blur transition hover:border-primary/50"
+              >
+                <Percent className="text-primary" style={{ height: 18, width: 18 }} />
+                <span className="text-[13px] font-bold leading-tight">
+                  Aksiya va
+                  <br />
+                  takliflar
+                </span>
+              </Link>
+              <Link
+                to="/about"
+                className="flex items-center gap-2.5 rounded-2xl border border-white/12 bg-black/45 px-3.5 py-3 text-left backdrop-blur transition hover:border-primary/50"
+              >
+                <Info style={{ height: 18, width: 18 }} className="text-primary" />
+                <span className="text-[13px] font-bold leading-tight">
+                  Restoran
+                  <br />
+                  haqida
+                </span>
+              </Link>
             </div>
           </div>
-        </motion.section>
-      )}
-
-      {/* ---------------- quick actions ---------------- */}
-      <section
-        className={cn(
-          "grid gap-2.5",
-          showPreorder && showDelivery
-            ? "grid-cols-3"
-            : showPreorder || showDelivery
-            ? "grid-cols-2"
-            : "grid-cols-1"
-        )}
-      >
-        <QuickAction
-          icon={Utensils}
-          label={t("dine_in")}
-          sub={table ? `Stol №${table.number}` : "—"}
-          onClick={() => navigate("/categories")}
-          accent
-        />
-        {showPreorder && (
-          <QuickAction icon={Clock} label={t("preorder")} sub={t("preorder_desc")} onClick={() => navigate("/orders")} />
-        )}
-        {showDelivery && (
-          <QuickAction icon={Truck} label={t("delivery")} sub={t("delivery_desc")} onClick={() => navigate("/about")} />
-        )}
-      </section>
-
-      {/* ---------------- promo rail ---------------- */}
-      {showPromotions && promo.length > 0 && (
-        <section>
-          <SectionHeader title={t("promo")} icon={Percent} action={{ label: t("see_all"), to: "/menu/c/promo" }} />
-          <div className="no-scrollbar -mx-4 flex gap-3 overflow-x-auto px-4 pb-1">
-            {promo.map((p, i) => (
-              <div key={p.id} className="w-[164px] shrink-0">
-                <ProductCard
-                  product={p}
-                  index={i}
-                  onAdd={() => add(p)}
-                  qty={qtyOf(p.id)}
-                  onInc={() => add(p)}
-                  onDec={() => setCartQty(sessionKey, p.id, qtyOf(p.id) - 1)}
-                  favorite={favorites.includes(p.id)}
-                  onToggleFavorite={() => toggleFavorite(p.id)}
-                />
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {/* ---------------- popular ---------------- */}
-      <section>
-        <SectionHeader title={t("popular")} icon={Flame} action={{ label: t("see_all"), to: "/categories" }} />
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-          {popular.map((p, i) => (
-            <ProductCard
-              key={p.id}
-              product={p}
-              index={i}
-              onAdd={() => add(p)}
-              qty={qtyOf(p.id)}
-              onInc={() => add(p)}
-              onDec={() => setCartQty(sessionKey, p.id, qtyOf(p.id) - 1)}
-              favorite={favorites.includes(p.id)}
-              onToggleFavorite={() => toggleFavorite(p.id)}
-            />
-          ))}
         </div>
       </section>
 
-      {/* ---------------- favourites ---------------- */}
-      {showFavorites && favouriteProducts.length > 0 && (
-        <section>
-          <SectionHeader title={t("favorites")} icon={Heart} />
-          <div className="no-scrollbar -mx-4 flex gap-3 overflow-x-auto px-4 pb-1">
-            {favouriteProducts.map((p, i) => (
-              <div key={p.id} className="w-[164px] shrink-0">
-                <ProductCard
-                  product={p}
-                  index={i}
-                  onAdd={() => add(p)}
-                  qty={qtyOf(p.id)}
-                  onInc={() => add(p)}
-                  onDec={() => setCartQty(sessionKey, p.id, qtyOf(p.id) - 1)}
-                  favorite
-                  onToggleFavorite={() => toggleFavorite(p.id)}
-                />
-              </div>
-            ))}
+      {/* ---------------- popular dishes ---------------- */}
+      {popular.length > 0 && (
+        <section className="mx-auto w-full max-w-md px-4 pt-8">
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="flex items-center gap-2 font-display text-lg font-extrabold">
+              <span className="flex h-8 w-8 items-center justify-center rounded-xl border border-primary/30 bg-primary/10 text-primary">
+                <Sparkles className="h-4 w-4" />
+              </span>
+              {t("popular")}
+            </h2>
+            <Link to="/menu" className="rounded-full border border-border bg-secondary/50 px-3 py-1.5 text-[11px] font-semibold text-muted-foreground transition hover:border-primary/40 hover:text-foreground">
+              {t("full_menu")}
+            </Link>
           </div>
-        </section>
-      )}
-
-      {/* ---------------- new ---------------- */}
-      {fresh.length > 0 && (
-        <section>
-          <SectionHeader title={t("new")} icon={Sparkles} action={{ label: t("see_all"), to: "/categories" }} />
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-            {fresh.map((p, i) => (
+          <div className="grid grid-cols-2 gap-3">
+            {popular.slice(0, 4).map((p, i) => (
               <ProductCard
                 key={p.id}
                 product={p}
@@ -264,79 +239,49 @@ export default function CustomerHome() {
         </section>
       )}
 
-      <CartBar />
-    </div>
-  );
-}
-
-function QuickAction({
-  icon: Icon,
-  label,
-  sub,
-  onClick,
-  accent,
-}: {
-  icon: typeof Bell;
-  label: string;
-  sub: string;
-  onClick: () => void;
-  accent?: boolean;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        "flex flex-col gap-2 rounded-2xl border p-3 text-left transition active:scale-[0.98]",
-        accent ? "border-primary/40 bg-primary/10" : "border-border bg-card/60 hover:border-primary/30 hover:bg-white/5"
-      )}
-    >
-      <span
-        className={cn(
-          "flex h-8 w-8 items-center justify-center rounded-xl",
-          accent ? "bg-primary/15 text-primary" : "bg-secondary/60 text-muted-foreground"
-        )}
-      >
-        <Icon className="h-4 w-4" />
-      </span>
-      <span>
-        <span className="block text-xs font-bold leading-tight">{label}</span>
-        <span className="mt-0.5 line-clamp-1 block text-[10px] text-muted-foreground">{sub}</span>
-      </span>
-    </button>
-  );
-}
-
-export function CartBar() {
-  const { sessionKey } = useCustomer();
-  const lines = useCart(sessionKey);
-  const db = useDB();
-  const { t } = useI18n();
-
-  if (!lines.length) return null;
-  const total = lines.reduce((s, l) => {
-    const p = db.products.find((x) => x.id === l.productId);
-    return s + (p ? p.price * l.qty : 0);
-  }, 0);
-  const count = lines.reduce((s, l) => s + l.qty, 0);
-
-  return (
-    <motion.div
-      initial={{ y: 60, opacity: 0 }}
-      animate={{ y: 0, opacity: 1 }}
-      className="sticky bottom-[76px] z-20 lg:bottom-4"
-    >
-      <Link to="/cart">
-        <div className="glow-red flex items-center gap-3 rounded-2xl border border-primary/40 bg-primary p-2 pl-4 text-primary-foreground">
-          <span className="relative">
-            <ShoppingBag className="h-5 w-5" />
-            <span className="absolute -right-2 -top-2 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-black/70 px-1 text-[10px] font-bold">
-              {count}
-            </span>
-          </span>
-          <span className="flex-1 text-sm font-bold">{t("continue_order")}</span>
-          <span className="rounded-xl bg-black/25 px-3 py-2 text-sm font-bold">{fmtNumber(total)} so‘m</span>
+      {/* ---------------- about + contacts ---------------- */}
+      <section className="mx-auto w-full max-w-md space-y-3 px-4 pt-8">
+        <div className="rounded-3xl border border-border bg-card/60 p-5">
+          <h2 className="font-display text-base font-bold">{t("about")}</h2>
+          <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{s.description}</p>
+          <div className="mt-4 grid gap-2.5 text-sm">
+            <p className="flex items-center gap-2.5 text-muted-foreground">
+              <Phone className="h-4 w-4 shrink-0 text-primary" /> {s.phone}
+            </p>
+            <p className="flex items-center gap-2.5 text-muted-foreground">
+              <MapPin className="h-4 w-4 shrink-0 text-primary" /> {s.address}
+            </p>
+            <p className="flex items-center gap-2.5 text-muted-foreground">
+              <Clock className="h-4 w-4 shrink-0 text-primary" /> {s.workingHours}
+            </p>
+            <p className="flex items-center gap-2.5 text-muted-foreground">
+              <Instagram className="h-4 w-4 shrink-0 text-primary" /> {s.instagram}
+            </p>
+            <p className="flex items-center gap-2.5 text-muted-foreground">
+              <Send className="h-4 w-4 shrink-0 text-primary" /> {s.telegram}
+            </p>
+          </div>
+          <div className="mt-4 flex gap-2.5">
+            <a href={s.mapsUrl} target="_blank" rel="noreferrer" className="flex-1">
+              <Button variant="secondary" className="w-full">
+                <MapPin className="h-4 w-4" /> {t("open_map")}
+              </Button>
+            </a>
+            <Link to="/about" className="flex-1">
+              <Button variant="outline" className="w-full">
+                {t("about")}
+              </Button>
+            </Link>
+          </div>
         </div>
-      </Link>
-    </motion.div>
+
+        <p className={cn("pb-2 text-center text-[11px] text-muted-foreground")}>{s.footerText}</p>
+        <p className="pb-4 text-center text-[11px]">
+          <Link to="/auth" className="text-muted-foreground/70 underline-offset-2 hover:text-primary hover:underline">
+            Xodimlar uchun kirish →
+          </Link>
+        </p>
+      </section>
+    </div>
   );
 }

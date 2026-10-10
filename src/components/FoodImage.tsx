@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 
 const EMOJI_POOL = ["🍣", "🍥", "🥢", "🍱", "🍜", "🥗", "🍰", "🥤", "🔥", "🍤"];
@@ -25,10 +25,16 @@ export function FoodImage({
   loading?: "lazy" | "eager";
 }) {
   const [status, setStatus] = useState<"loading" | "ok" | "error">(src ? "loading" : "error");
+  const imgRef = useRef<HTMLImageElement | null>(null);
   const fallback = emoji ?? EMOJI_POOL[hash(alt) % EMOJI_POOL.length];
 
   useEffect(() => {
     setStatus(src ? "loading" : "error");
+    // Uploaded photos are data URLs: they finish decoding before this effect
+    // runs, so `onLoad` never fires again and the tile would stay invisible
+    // behind the fallback forever. Trust an already-complete image.
+    const el = imgRef.current;
+    if (src && el?.complete && el.naturalWidth > 0) setStatus("ok");
   }, [src]);
 
   return (
@@ -49,6 +55,7 @@ export function FoodImage({
       </div>
       {status !== "error" && src && (
         <img
+          ref={imgRef}
           src={src}
           alt={alt}
           loading={loading}

@@ -278,6 +278,7 @@ export const DEFAULT_SETTINGS: RestaurantSettings = {
   mapsUrl: "https://maps.google.com/?q=Tashkent",
   workingHours: "Har kuni 10:00 – 23:00",
   deliveryInfo: "Yetkazib berish 30–60 daqiqa ichida.",
+  deliveryFee: 15000,
   footerText: "© 2026 YÜMI. Barcha huquqlar himoyalangan.",
   currency: "so‘m",
   taxPercent: 0,

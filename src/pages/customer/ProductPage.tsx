@@ -6,7 +6,7 @@ import { FoodImage } from "@/components/FoodImage";
 import { ProductCard } from "@/components/customer/ProductCard";
 import { Button, EmptyState, Tabs } from "@/components/ui/primitives";
 import { SectionHeader } from "@/components/customer/menu";
-import { CartBar } from "./Home";
+import { CartBar } from "@/components/customer/CartBar";
 import { addToCart, setCartQty, useCart } from "@/lib/cart";
 import { useCustomer } from "@/lib/customer";
 import { useFavorites, toggleFavorite } from "@/lib/favorites";

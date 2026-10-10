@@ -27,8 +27,9 @@ export function WaiterCallButton({ variant = "fab" }: { variant?: "fab" | "sideb
     setOpen(false);
   };
 
-  // Developer "Bo‘limlar" o‘chirilgan bo‘lsa, tugma butunlay yo‘qoladi.
-  if (!waiterCallEnabled) return null;
+  // Developer "Bo‘limlar" o‘chirilgan bo‘lsa yoki stol sessiya bo‘lmasa
+  // (delivery/pre-order), tugma butunlay yo‘qoladi.
+  if (!waiterCallEnabled || !table) return null;
 
   if (variant === "sidebar") {
     return (
